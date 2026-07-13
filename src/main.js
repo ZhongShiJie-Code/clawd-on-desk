@@ -2063,6 +2063,12 @@ function focusDashboardSession(sessionId, options = {}) {
     return true;
   }
 
+  if (focusTarget.type === "claude-desktop") {
+    focusLog(`focus request source=${requestSource} sid=${id} agent=claude-desktop target=app`);
+    shell.openExternal("file:///Applications/Claude.app").catch(() => {});
+    return true;
+  }
+
   if (focusTarget.type === "terminal") {
     return focusTerminalSession(focusEntry, id, requestSource);
   }

@@ -529,6 +529,20 @@ function applyAgentPidFields(body, agentPid, headless) {
 //   - empty (prompt/end miss) → every pid field is null/[], so source_pid,
 //     agent_pid, pid_chain, etc. are all left off (never a degraded
 //     process.ppid). source_pid is guarded so an empty result ships no null pid.
+function isClaudeDesktopCoworkCommand(commandLine) {
+  const command = typeof commandLine === "string" ? commandLine : "";
+  return /--input-format(?:=|\s+)stream-json/.test(command)
+    && /--output-format(?:=|\s+)stream-json/.test(command)
+    && /--permission-prompt-tool(?:=|\s+)stdio/.test(command);
+}
+
+function applyClaudeDesktopIdentity(body, commandLine) {
+  if (!isClaudeDesktopCoworkCommand(commandLine)) return;
+  body.agent_id = "claude-desktop";
+  body.claude_desktop = true;
+}
+
+// Fresh-resolve path: preserves the exact pre-cache field output (#627).
 function applyResolvedFields(body, resolved, event) {
   const { stablePid, agentPid, headless, detectedEditor, pidChain, foregroundWtHwnd, tmuxSocket, tmuxClient } = resolved;
   if (stablePid) body.source_pid = stablePid;
@@ -776,6 +790,10 @@ function main() {
       const payload = stdinRead.payload;
       const body = buildStateBody(event, payload || {}, resolve);
       if (!body) process.exit(0);
+      // Claude Desktop Code/Cowork is a real Claude Code process with hooks;
+      // label it separately so the HUD can focus the Desktop app, while native
+      // Desktop permission prompts remain owned by Claude Desktop.
+      applyClaudeDesktopIdentity(body, resolve().agentCommandLine);
       attachStdinDiag(body, stdinRead);
       // Completion events (Stop) fire the happy animation, are low-frequency,
       // and matter more than a few ms of latency. Give them a generous POST
@@ -810,6 +828,7 @@ module.exports = {
   classifyTestResult,
   isRecognizedTestCommand,
   isClaudeHeadlessCommandLine,
+  isClaudeDesktopCoworkCommand,
   attachStdinDiag,
   STDIN_READ_TIMEOUT_MS,
   extractSessionTitleFromTranscript,

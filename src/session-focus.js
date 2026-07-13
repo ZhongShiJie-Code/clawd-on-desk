@@ -45,6 +45,12 @@ function getSessionFocusTarget(entry, options = {}) {
   if (entry.host && !hasOrcaPaneTarget) return { canFocus: false, type: null, url: null };
   if (hasOrcaPaneTarget) return { canFocus: true, type: "terminal", url: null };
 
+  if (entry.agentId === "claude-desktop") {
+    return normalizeOsPlatform(options) === "darwin"
+      ? { canFocus: true, type: "claude-desktop", url: null }
+      : { canFocus: false, type: null, url: null };
+  }
+
   const codexThreadUrl = getCodexThreadUrl(entry);
   if (codexThreadUrl) {
     if (normalizeOsPlatform(options) === "win32") {

@@ -1,0 +1,115 @@
+"use strict";
+
+// Claude Desktop Cowork deliberately launches Claude Code with an isolated
+// CLAUDE_CONFIG_DIR, so user-level hooks are not loaded. Its local-agent
+// transcript is, however, an append-only record with the real session id and
+// tool/completion boundaries. This monitor turns those records into normal
+// Clawd /state events without modifying or injecting into Claude Desktop.
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { postStateToRunningServer } = require("../hooks/server-config");
+
+const DEFAULT_ROOT = path.join(os.homedir(), "Library", "Application Support", "Claude-3p", "local-agent-mode-sessions");
+
+function listDirectories(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(dir, entry.name));
+  } catch { return []; }
+}
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+}
+
+function latestTranscriptEvent(file) {
+  let lines;
+  try { lines = fs.readFileSync(file, "utf8").trim().split("\n"); } catch { return null; }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const entry = readJsonLine(lines[index]);
+    if (!entry || !entry.message) continue;
+    const role = entry.message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    const content = Array.isArray(entry.message.content) ? entry.message.content : [];
+    const tool = content.find((block) => block && block.type === "tool_use");
+    if (role === "assistant" && tool) return { state: "working", event: "PreToolUse", toolName: tool.name || null };
+    return role === "assistant"
+      ? { state: "attention", event: "Stop", toolName: null }
+      : { state: "thinking", event: "UserPromptSubmit", toolName: null };
+  }
+  return null;
+}
+
+function readJsonLine(line) {
+  try { return JSON.parse(line); } catch { return null; }
+}
+
+function discoverSessions(root = DEFAULT_ROOT) {
+  const sessions = [];
+  for (const account of listDirectories(root)) {
+    for (const organization of listDirectories(account)) {
+      for (const localSession of listDirectories(organization)) {
+        const claudeDir = path.join(localSession, ".claude");
+        const sessionDir = path.join(claudeDir, "sessions");
+        for (const name of (() => { try { return fs.readdirSync(sessionDir); } catch { return []; } })()) {
+          if (!name.endsWith(".json")) continue;
+          const meta = readJson(path.join(sessionDir, name));
+          if (!meta || !meta.sessionId) continue;
+          const projectDir = path.join(claudeDir, "projects");
+          let transcript = null;
+          for (const project of listDirectories(projectDir)) {
+            const candidate = path.join(project, `${meta.sessionId}.jsonl`);
+            if (fs.existsSync(candidate)) { transcript = candidate; break; }
+          }
+          if (transcript) sessions.push({ meta, transcript });
+        }
+      }
+    }
+  }
+  return sessions;
+}
+
+function createClaudeDesktopCoworkBridge(options = {}) {
+  const root = options.root || DEFAULT_ROOT;
+  const postState = options.postState || ((body) => postStateToRunningServer(body, { timeoutMs: 500 }, () => {}));
+  const intervalMs = options.intervalMs || 1200;
+  const seen = new Map();
+  let timer = null;
+
+  function poll() {
+    for (const { meta, transcript } of discoverSessions(root)) {
+      let stat;
+      try { stat = fs.statSync(transcript); } catch { continue; }
+      const revision = `${stat.mtimeMs}:${stat.size}`;
+      const key = `${meta.sessionId}:${revision}`;
+      if (seen.has(key)) continue;
+      for (const existing of seen.keys()) if (existing.startsWith(`${meta.sessionId}:`)) seen.delete(existing);
+      seen.set(key, true);
+      const event = latestTranscriptEvent(transcript);
+      if (!event) continue;
+      const body = {
+        session_id: meta.sessionId,
+        state: event.state,
+        event: event.event,
+        agent_id: "claude-desktop",
+        claude_desktop: true,
+        cwd: meta.cwd,
+        source_pid: meta.pid,
+        agent_pid: meta.pid,
+        claude_pid: meta.pid,
+      };
+      if (event.toolName) body.tool_name = event.toolName;
+      postState(body);
+    }
+  }
+
+  return {
+    start() { if (!timer && process.platform === "darwin") { poll(); timer = setInterval(poll, intervalMs); timer.unref?.(); } },
+    stop() { if (timer) clearInterval(timer); timer = null; },
+    poll,
+  };
+}
+
+module.exports = { createClaudeDesktopCoworkBridge, discoverSessions, latestTranscriptEvent };

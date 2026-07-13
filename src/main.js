@@ -157,6 +157,7 @@ const { isSessionInProgress } = require("./state-session-snapshot");
 const { restoreSessionsFromRecoveryLeases } = require("./session-recovery-loader");
 const { getAllAgents, getAgent } = require("../agents/registry");
 const { getAgentIconUrl } = require("./state-agent-icons");
+const { createClaudeDesktopCoworkBridge } = require("./claude-desktop-cowork-bridge");
 // ── Autoplay policy: allow sound playback without user gesture ──
 // MUST be set before any BrowserWindow is created (before app.whenReady)
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
@@ -168,6 +169,7 @@ const LINUX_WINDOW_TYPE = "toolbar";
 const THEME_SWITCH_FADE_OUT_MS = 140;
 const THEME_SWITCH_FADE_IN_MS = 180;
 const THEME_SWITCH_FADE_FALLBACK_MS = 4000;
+const claudeDesktopCoworkBridge = createClaudeDesktopCoworkBridge();
 
 applyWindowsAppUserModelId(app, process.platform);
 
@@ -4645,6 +4647,7 @@ if (!gotTheLock) {
     // agent-gate snapshot — a user who disabled Codex at last shutdown
     // shouldn't see its file watcher spin up on the next launch.
     agentRuntime.startCodexLogMonitor();
+    claudeDesktopCoworkBridge.start();
 
     // Auto-install VS Code/Cursor terminal-focus extension
     try { installTerminalFocusExtension(); } catch (err) {
@@ -4696,6 +4699,7 @@ if (!gotTheLock) {
     if (macHideController) macHideController.stop();
     _sessionHud.cleanup();
     agentRuntime.cleanup();
+    claudeDesktopCoworkBridge.stop();
     topmostRuntime.cleanup();
     themeRuntime.cleanup();
     _focus.cleanup();

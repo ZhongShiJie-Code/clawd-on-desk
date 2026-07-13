@@ -80,6 +80,25 @@ describe("session focus helpers", () => {
     });
   });
 
+  it("derives Claude Desktop Code/Cowork focus targets only on macOS", () => {
+    const entry = {
+      id: "desktop-cowork-session",
+      agentId: "claude-desktop",
+      state: "working",
+    };
+
+    assert.deepStrictEqual(getSessionFocusTarget(entry, { osPlatform: "darwin" }), {
+      canFocus: true,
+      type: "claude-desktop",
+      url: null,
+    });
+    assert.deepStrictEqual(getSessionFocusTarget(entry, { osPlatform: "win32" }), {
+      canFocus: false,
+      type: null,
+      url: null,
+    });
+  });
+
   it("downgrades Codex Desktop thread focus targets on Windows", () => {
     const entry = {
       id: "codex:019e115a-4df2-7ed0-b90e-8e6345aca777",

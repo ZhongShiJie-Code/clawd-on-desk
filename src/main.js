@@ -2065,7 +2065,9 @@ function focusDashboardSession(sessionId, options = {}) {
 
   if (focusTarget.type === "claude-desktop") {
     focusLog(`focus request source=${requestSource} sid=${id} agent=claude-desktop target=app`);
-    shell.openExternal("file:///Applications/Claude.app").catch(() => {});
+    // `openPath` hands the bundle to LaunchServices, which activates Claude
+    // instead of merely opening its path in Finder.
+    shell.openPath("/Applications/Claude.app").catch(() => {});
     return true;
   }
 

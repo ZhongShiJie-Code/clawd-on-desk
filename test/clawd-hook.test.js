@@ -16,6 +16,7 @@ const {
   classifyTestResult,
   isRecognizedTestCommand,
   isClaudeHeadlessCommandLine,
+  isClaudeDesktopCoworkCommand,
   attachStdinDiag,
   STDIN_READ_TIMEOUT_MS: CLAWD_HOOK_STDIN_TIMEOUT_MS,
   extractSessionTitleFromTranscript,
@@ -37,6 +38,20 @@ const mockResolve = () => ({
   agentPid: null,
   detectedEditor: null,
   pidChain: [],
+});
+
+describe("Claude Desktop Code/Cowork process detection", () => {
+  it("matches the Desktop stream-json process signature", () => {
+    assert.strictEqual(isClaudeDesktopCoworkCommand(
+      "claude --output-format stream-json --input-format stream-json --permission-prompt-tool stdio --verbose"
+    ), true);
+  });
+
+  it("does not relabel ordinary Claude Code processes", () => {
+    assert.strictEqual(isClaudeDesktopCoworkCommand(
+      "claude --output-format text --permission-mode default"
+    ), false);
+  });
 });
 
 describe("buildStateBody", () => {

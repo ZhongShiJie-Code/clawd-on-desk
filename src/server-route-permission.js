@@ -1326,6 +1326,16 @@ function handlePermissionPost(req, res, options) {
       const suggestions = normalizePermissionSuggestions(rawSuggestions);
 
       const existingSession = ctx.sessions.get(sessionId);
+      // Claude Desktop Code/Cowork runs the same Claude hook protocol, but its
+      // own app owns the native permission UI. State hooks have already
+      // identified that session as claude-desktop; drop this HTTP hook so
+      // Claude Desktop keeps its original approval flow.
+      if (existingSession && existingSession.agentId === "claude-desktop") {
+        recordRequestHookEvent.accepted();
+        ctx.permLog(`Claude Desktop native permission fallback session=${sessionId}`);
+        res.destroy();
+        return;
+      }
       if (existingSession && existingSession.headless) {
         recordRequestHookEvent.accepted();
         ctx.permLog(`SKIPPED: headless session=${sessionId}`);

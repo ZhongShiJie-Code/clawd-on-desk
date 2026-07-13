@@ -3,6 +3,7 @@
 
 const claudeCode = require("./claude-code");
 const claudeDesktop = require("./claude-desktop");
+const claudeDesktopMcp = require("./claude-desktop-mcp");
 const codex = require("./codex");
 const copilotCli = require("./copilot-cli");
 const geminiCli = require("./gemini-cli");
@@ -27,6 +28,7 @@ const workbuddy = require("./workbuddy");
 const AGENTS = [
   claudeCode,
   claudeDesktop,
+  claudeDesktopMcp,
   codex,
   copilotCli,
   geminiCli,

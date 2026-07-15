@@ -104,7 +104,12 @@ function discoverSessions(root = DEFAULT_ROOT) {
 
 function createClaudeDesktopCoworkBridge(options = {}) {
   const root = options.root || DEFAULT_ROOT;
-  const postState = options.postState || ((body) => postStateToRunningServer(body, { timeoutMs: 500 }, () => {}));
+  const hasCustomPostState = typeof options.postState === "function";
+  const postState = options.postState || ((body, callback) => postStateToRunningServer(
+    body,
+    { timeoutMs: 500 },
+    callback
+  ));
   const intervalMs = options.intervalMs || 1200;
   const seen = new Map();
   let timer = null;
@@ -116,8 +121,6 @@ function createClaudeDesktopCoworkBridge(options = {}) {
       const revision = `${stat.mtimeMs}:${stat.size}`;
       const key = `${meta.sessionId}:${revision}`;
       if (seen.has(key)) continue;
-      for (const existing of seen.keys()) if (existing.startsWith(`${meta.sessionId}:`)) seen.delete(existing);
-      seen.set(key, true);
       const event = latestTranscriptEvent(transcript);
       if (!event) continue;
       const body = {
@@ -132,7 +135,23 @@ function createClaudeDesktopCoworkBridge(options = {}) {
         claude_pid: meta.pid,
       };
       if (event.toolName) body.tool_name = event.toolName;
-      postState(body);
+      // Server startup races this monitor by a short interval.  Do not poison
+      // the revision cache until the local Clawd server acknowledges it;
+      // otherwise the first Cowork state after app launch is silently lost.
+      let completed = false;
+      const acknowledge = (accepted) => {
+        if (completed || accepted === false) return;
+        completed = true;
+        for (const existing of seen.keys()) {
+          if (existing.startsWith(`${meta.sessionId}:`)) seen.delete(existing);
+        }
+        seen.set(key, true);
+      };
+      const result = postState(body, acknowledge);
+      if (hasCustomPostState) {
+        if (result && typeof result.then === "function") result.then(acknowledge, () => {});
+        else acknowledge(result);
+      }
     }
   }
 

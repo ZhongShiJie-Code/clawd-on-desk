@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  createClaudeDesktopCoworkBridge,
   discoverSessions,
   latestTranscriptEvent,
 } = require("../src/claude-desktop-cowork-bridge");
@@ -50,6 +51,34 @@ describe("Claude Desktop Cowork bridge", () => {
       assert.deepStrictEqual(latestTranscriptEvent(transcript), {
         state: "working", event: "PreToolUse", toolName: "Bash",
       });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retries a transcript revision when Clawd is not ready at startup", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-cowork-retry-"));
+    try {
+      const org = path.join(root, "account", "00000000");
+      const localId = "local_retry";
+      const cliId = "cli-retry";
+      const project = path.join(org, localId, ".claude", "projects", "demo");
+      fs.mkdirSync(project, { recursive: true });
+      fs.writeFileSync(path.join(org, `${localId}.json`), JSON.stringify({ sessionId: localId, cliSessionId: cliId }));
+      fs.writeFileSync(path.join(project, `${cliId}.jsonl`), JSON.stringify({
+        message: { role: "user", content: [{ type: "text", text: "go" }] },
+      }));
+      const outcomes = [false, true];
+      let posts = 0;
+      const bridge = createClaudeDesktopCoworkBridge({
+        root,
+        postState: () => { posts += 1; return outcomes.shift(); },
+      });
+
+      bridge.poll();
+      bridge.poll();
+      bridge.poll();
+      assert.strictEqual(posts, 2);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

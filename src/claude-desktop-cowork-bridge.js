@@ -54,16 +54,56 @@ function readJsonLine(line) {
   try { return JSON.parse(line); } catch { return null; }
 }
 
+// Cowork writes the authoritative selected model and context window to its
+// per-session audit log. The transcript can be routed through a proxy, so its
+// message.model is not a reliable display value. modelUsage's token totals are
+// lifetime counters, though, and must not be shown as the current context.
+function latestAuditContextWindow(file, selectedModel) {
+  let lines;
+  try { lines = fs.readFileSync(file, "utf8").trim().split("\n"); } catch { return null; }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const usageByModel = readJsonLine(lines[index])?.modelUsage;
+    if (!usageByModel || typeof usageByModel !== "object") continue;
+    const usage = usageByModel[selectedModel]
+      || (Object.keys(usageByModel).length === 1 ? usageByModel[Object.keys(usageByModel)[0]] : null);
+    if (!usage || typeof usage !== "object") continue;
+    const limit = Number(usage.contextWindow);
+    if (Number.isFinite(limit) && limit > 0) return limit;
+  }
+  return null;
+}
+
+function latestTranscriptContextUsage(file, contextWindow) {
+  let lines;
+  try { lines = fs.readFileSync(file, "utf8").trim().split("\n"); } catch { return null; }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const usage = readJsonLine(lines[index])?.message?.usage;
+    if (!usage || typeof usage !== "object") continue;
+    const parts = [usage.input_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens]
+      .map(Number)
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    if (!parts.length) continue;
+    const used = parts.reduce((total, value) => total + value, 0);
+    const contextUsage = { used };
+    if (Number.isFinite(Number(contextWindow)) && Number(contextWindow) > 0) {
+      contextUsage.limit = Number(contextWindow);
+      contextUsage.percent = Math.round((used / Number(contextWindow)) * 100);
+    }
+    return contextUsage;
+  }
+  return null;
+}
+
 function discoverSessions(root = DEFAULT_ROOT) {
   const sessions = [];
   const transcriptPaths = new Set();
-  const addSession = (meta, transcript) => {
+  const addSession = (meta, transcript, audit) => {
     // Newer Cowork releases write both a parent local_<id>.json and a
     // compatibility .claude/sessions record for one transcript. Prefer the
     // parent record (added first) so Clawd gets one stable session id.
     if (!transcript || transcriptPaths.has(transcript)) return;
     transcriptPaths.add(transcript);
-    sessions.push({ meta, transcript });
+    sessions.push({ meta, transcript, audit });
   };
   for (const account of listDirectories(root)) {
     for (const organization of listDirectories(account)) {
@@ -85,7 +125,7 @@ function discoverSessions(root = DEFAULT_ROOT) {
           const candidate = path.join(project, `${transcriptId}.jsonl`);
           if (fs.existsSync(candidate)) { transcript = candidate; break; }
         }
-        addSession(meta, transcript);
+        addSession(meta, transcript, path.join(localSession, "audit.jsonl"));
       }
 
       // Keep supporting the older layout in case Desktop reverts it:
@@ -103,7 +143,7 @@ function discoverSessions(root = DEFAULT_ROOT) {
             const candidate = path.join(project, `${meta.sessionId}.jsonl`);
             if (fs.existsSync(candidate)) { transcript = candidate; break; }
           }
-          addSession(meta, transcript);
+          addSession(meta, transcript, path.join(localSession, "audit.jsonl"));
         }
       }
     }
@@ -124,7 +164,7 @@ function createClaudeDesktopCoworkBridge(options = {}) {
   let timer = null;
 
   function poll() {
-    for (const { meta, transcript } of discoverSessions(root)) {
+    for (const { meta, transcript, audit } of discoverSessions(root)) {
       let stat;
       try { stat = fs.statSync(transcript); } catch { continue; }
       const revision = `${stat.mtimeMs}:${stat.size}`;
@@ -138,11 +178,20 @@ function createClaudeDesktopCoworkBridge(options = {}) {
         event: event.event,
         agent_id: "claude-desktop",
         claude_desktop: true,
-        cwd: meta.cwd,
+        // Desktop's internal cwd points at Claude-3p/.../outputs. Prefer the
+        // folder the user actually attached to the Cowork conversation.
+        cwd: Array.isArray(meta.userSelectedFolders) && meta.userSelectedFolders[0]
+          ? meta.userSelectedFolders[0]
+          : meta.cwd,
         source_pid: meta.pid,
         agent_pid: meta.pid,
         claude_pid: meta.pid,
       };
+      if (typeof meta.title === "string" && meta.title.trim()) body.session_title = meta.title.trim();
+      if (typeof meta.model === "string" && meta.model.trim()) body.model = meta.model.trim();
+      const contextWindow = latestAuditContextWindow(audit, meta.model);
+      const contextUsage = latestTranscriptContextUsage(transcript, contextWindow);
+      if (contextUsage) body.context_usage = contextUsage;
       if (event.toolName) body.tool_name = event.toolName;
       // Server startup races this monitor by a short interval.  Do not poison
       // the revision cache until the local Clawd server acknowledges it;
@@ -171,4 +220,10 @@ function createClaudeDesktopCoworkBridge(options = {}) {
   };
 }
 
-module.exports = { createClaudeDesktopCoworkBridge, discoverSessions, latestTranscriptEvent };
+module.exports = {
+  createClaudeDesktopCoworkBridge,
+  discoverSessions,
+  latestTranscriptEvent,
+  latestAuditContextWindow,
+  latestTranscriptContextUsage,
+};

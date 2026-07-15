@@ -4,6 +4,7 @@ const { canOfferLocalFolder, focusUnavailableReasonKey } = globalThis.ClawdSessi
 
 const AGENT_LABELS = {
   "claude-code": "Claude Code",
+  "claude-desktop": "Claude Desktop",
   codex: "Codex",
   "copilot-cli": "Copilot",
   "cursor-agent": "Cursor Agent",
@@ -670,7 +671,9 @@ function createCard(session, now) {
   const focusTargetType = session.focusTarget && session.focusTarget.type;
   button.textContent = focusTargetType === "codex-thread"
     ? t("dashboardOpenCodexSession")
-    : t("dashboardJumpTerminal");
+    : (focusTargetType === "claude-desktop"
+      ? t("dashboardOpenClaudeDesktop")
+      : t("dashboardJumpTerminal"));
   button.disabled = session.canFocus !== true;
   if (button.disabled) {
     button.title = focusUnavailableText(session);

@@ -141,4 +141,26 @@ describe("Claude Desktop Cowork bridge", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("does not replay an archived Cowork session as live work", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-cowork-archived-"));
+    try {
+      const org = path.join(root, "account", "00000000");
+      const localId = "local_archived";
+      const cliId = "cli-archived";
+      const project = path.join(org, localId, ".claude", "projects", "demo");
+      fs.mkdirSync(project, { recursive: true });
+      fs.writeFileSync(path.join(org, `${localId}.json`), JSON.stringify({
+        sessionId: localId, cliSessionId: cliId, isArchived: true,
+      }));
+      fs.writeFileSync(path.join(project, `${cliId}.jsonl`), JSON.stringify({
+        message: { role: "user", content: [{ type: "text", text: "old prompt" }] },
+      }));
+      let posts = 0;
+      createClaudeDesktopCoworkBridge({ root, postState: () => { posts += 1; return true; } }).poll();
+      assert.strictEqual(posts, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

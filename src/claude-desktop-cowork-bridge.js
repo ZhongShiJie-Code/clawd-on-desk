@@ -172,6 +172,9 @@ function createClaudeDesktopCoworkBridge(options = {}) {
   function poll() {
     const sessions = discoverSessions(root);
     for (const { meta, transcript, audit } of sessions) {
+      // A bridge restart must not replay an archived Desktop conversation as
+      // current work just because its final transcript record was a prompt.
+      if (meta.isArchived === true) continue;
       let stat;
       try { stat = fs.statSync(transcript); } catch { continue; }
       const revision = `${stat.mtimeMs}:${stat.size}`;

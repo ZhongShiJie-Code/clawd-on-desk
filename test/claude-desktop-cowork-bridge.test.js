@@ -29,6 +29,9 @@ describe("Claude Desktop Cowork bridge", () => {
       fs.writeFileSync(path.join(project, `${cliId}.jsonl`), JSON.stringify({
         message: { role: "assistant", content: [{ type: "text", text: "done" }] },
       }));
+      const legacySessions = path.join(org, localId, ".claude", "sessions");
+      fs.mkdirSync(legacySessions, { recursive: true });
+      fs.writeFileSync(path.join(legacySessions, "1.json"), JSON.stringify({ sessionId: cliId }));
 
       const sessions = discoverSessions(root);
       assert.strictEqual(sessions.length, 1);

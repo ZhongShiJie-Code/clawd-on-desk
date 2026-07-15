@@ -56,6 +56,15 @@ function readJsonLine(line) {
 
 function discoverSessions(root = DEFAULT_ROOT) {
   const sessions = [];
+  const transcriptPaths = new Set();
+  const addSession = (meta, transcript) => {
+    // Newer Cowork releases write both a parent local_<id>.json and a
+    // compatibility .claude/sessions record for one transcript. Prefer the
+    // parent record (added first) so Clawd gets one stable session id.
+    if (!transcript || transcriptPaths.has(transcript)) return;
+    transcriptPaths.add(transcript);
+    sessions.push({ meta, transcript });
+  };
   for (const account of listDirectories(root)) {
     for (const organization of listDirectories(account)) {
       // Current Cowork stores metadata next to each local session directory:
@@ -76,7 +85,7 @@ function discoverSessions(root = DEFAULT_ROOT) {
           const candidate = path.join(project, `${transcriptId}.jsonl`);
           if (fs.existsSync(candidate)) { transcript = candidate; break; }
         }
-        if (transcript) sessions.push({ meta, transcript });
+        addSession(meta, transcript);
       }
 
       // Keep supporting the older layout in case Desktop reverts it:
@@ -94,7 +103,7 @@ function discoverSessions(root = DEFAULT_ROOT) {
             const candidate = path.join(project, `${meta.sessionId}.jsonl`);
             if (fs.existsSync(candidate)) { transcript = candidate; break; }
           }
-          if (transcript) sessions.push({ meta, transcript });
+          addSession(meta, transcript);
         }
       }
     }

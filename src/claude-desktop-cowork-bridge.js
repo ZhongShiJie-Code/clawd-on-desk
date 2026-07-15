@@ -33,8 +33,16 @@ function latestTranscriptEvent(file) {
     const role = entry.message.role;
     if (role !== "user" && role !== "assistant") continue;
     const content = Array.isArray(entry.message.content) ? entry.message.content : [];
+    // Tool results are represented as role=user. They are not a new user
+    // prompt, so keep scanning back to the preceding tool boundary.
+    if (role === "user" && (entry.message.tool_use_id || content.some((block) => block && block.type === "tool_result"))) continue;
     const tool = content.find((block) => block && block.type === "tool_use");
-    if (role === "assistant" && tool) return { state: "working", event: "PreToolUse", toolName: tool.name || null };
+    if (role === "assistant" && tool) {
+      const toolName = tool.name || null;
+      return toolName === "Task"
+        ? { state: "juggling", event: "SubagentStart", toolName }
+        : { state: "working", event: "PreToolUse", toolName };
+    }
     return role === "assistant"
       ? { state: "attention", event: "Stop", toolName: null }
       : { state: "thinking", event: "UserPromptSubmit", toolName: null };

@@ -2,6 +2,9 @@
 module.exports = {
   id: "claude-desktop",
   name: "Claude Desktop",
+  // Cowork's embedded CLI has the same process name as ordinary Claude Code.
+  // Its identity must therefore come from the read-only bridge, not PID
+  // autodetection; this entry is solely for focusing the Desktop app.
   processNames: { win: ["Claude.exe"], mac: ["Claude"], linux: [] },
   eventSource: "hook",
   eventMap: require("./claude-code").eventMap,

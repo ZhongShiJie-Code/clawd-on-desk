@@ -169,7 +169,9 @@ const LINUX_WINDOW_TYPE = "toolbar";
 const THEME_SWITCH_FADE_OUT_MS = 140;
 const THEME_SWITCH_FADE_IN_MS = 180;
 const THEME_SWITCH_FADE_FALLBACK_MS = 4000;
-const claudeDesktopCoworkBridge = createClaudeDesktopCoworkBridge();
+const claudeDesktopCoworkBridge = createClaudeDesktopCoworkBridge({
+  debugLog: (message) => sessionLog(message),
+});
 
 applyWindowsAppUserModelId(app, process.platform);
 

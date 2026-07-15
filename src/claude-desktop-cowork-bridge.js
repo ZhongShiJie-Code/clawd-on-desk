@@ -153,6 +153,7 @@ function discoverSessions(root = DEFAULT_ROOT) {
 
 function createClaudeDesktopCoworkBridge(options = {}) {
   const root = options.root || DEFAULT_ROOT;
+  const debugLog = typeof options.debugLog === "function" ? options.debugLog : () => {};
   const hasCustomPostState = typeof options.postState === "function";
   const postState = options.postState || ((body, callback) => postStateToRunningServer(
     body,
@@ -164,7 +165,8 @@ function createClaudeDesktopCoworkBridge(options = {}) {
   let timer = null;
 
   function poll() {
-    for (const { meta, transcript, audit } of discoverSessions(root)) {
+    const sessions = discoverSessions(root);
+    for (const { meta, transcript, audit } of sessions) {
       let stat;
       try { stat = fs.statSync(transcript); } catch { continue; }
       const revision = `${stat.mtimeMs}:${stat.size}`;
@@ -193,17 +195,22 @@ function createClaudeDesktopCoworkBridge(options = {}) {
       const contextUsage = latestTranscriptContextUsage(transcript, contextWindow);
       if (contextUsage) body.context_usage = contextUsage;
       if (event.toolName) body.tool_name = event.toolName;
+      debugLog(`Cowork bridge post sid=${meta.sessionId} title=${body.session_title || "-"} event=${event.event}`);
       // Server startup races this monitor by a short interval.  Do not poison
       // the revision cache until the local Clawd server acknowledges it;
       // otherwise the first Cowork state after app launch is silently lost.
       let completed = false;
       const acknowledge = (accepted) => {
-        if (completed || accepted === false) return;
+        if (completed || accepted === false) {
+          if (accepted === false) debugLog(`Cowork bridge rejected sid=${meta.sessionId}`);
+          return;
+        }
         completed = true;
         for (const existing of seen.keys()) {
           if (existing.startsWith(`${meta.sessionId}:`)) seen.delete(existing);
         }
         seen.set(key, true);
+        debugLog(`Cowork bridge accepted sid=${meta.sessionId}`);
       };
       const result = postState(body, acknowledge);
       if (hasCustomPostState) {
@@ -214,7 +221,13 @@ function createClaudeDesktopCoworkBridge(options = {}) {
   }
 
   return {
-    start() { if (!timer && process.platform === "darwin") { poll(); timer = setInterval(poll, intervalMs); timer.unref?.(); } },
+    start() {
+      if (timer || process.platform !== "darwin") return;
+      debugLog(`Cowork bridge start root=${root}`);
+      poll();
+      timer = setInterval(poll, intervalMs);
+      timer.unref?.();
+    },
     stop() { if (timer) clearInterval(timer); timer = null; },
     poll,
   };

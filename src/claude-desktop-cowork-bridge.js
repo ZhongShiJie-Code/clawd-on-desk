@@ -58,6 +58,29 @@ function discoverSessions(root = DEFAULT_ROOT) {
   const sessions = [];
   for (const account of listDirectories(root)) {
     for (const organization of listDirectories(account)) {
+      // Current Cowork stores metadata next to each local session directory:
+      //   <org>/local_<id>.json
+      //   <org>/local_<id>/.claude/projects/.../<cliSessionId>.jsonl
+      // The transcript uses cliSessionId (not the local_ session id).
+      let names = [];
+      try { names = fs.readdirSync(organization); } catch { names = []; }
+      for (const name of names) {
+        if (!/^local_.+\.json$/.test(name)) continue;
+        const meta = readJson(path.join(organization, name));
+        if (!meta || !meta.sessionId) continue;
+        const localSession = path.join(organization, name.slice(0, -5));
+        const transcriptId = meta.cliSessionId || meta.sessionId;
+        const projectDir = path.join(localSession, ".claude", "projects");
+        let transcript = null;
+        for (const project of listDirectories(projectDir)) {
+          const candidate = path.join(project, `${transcriptId}.jsonl`);
+          if (fs.existsSync(candidate)) { transcript = candidate; break; }
+        }
+        if (transcript) sessions.push({ meta, transcript });
+      }
+
+      // Keep supporting the older layout in case Desktop reverts it:
+      //   <org>/<local-session>/.claude/sessions/<id>.json
       for (const localSession of listDirectories(organization)) {
         const claudeDir = path.join(localSession, ".claude");
         const sessionDir = path.join(claudeDir, "sessions");

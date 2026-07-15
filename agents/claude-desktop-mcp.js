@@ -5,7 +5,10 @@ module.exports = {
   eventSource: "mcp",
   // The MCP server only creates approval requests; it does not observe the
   // Desktop session lifecycle (that remains the responsibility of hooks).
-  eventMap: { PermissionRequest: "permission" },
+  // The route is determined by the approval MCP endpoint.  The state map is
+  // only metadata for the shared agent registry, so use the standard waiting
+  // state rather than a non-state sentinel.
+  eventMap: { PermissionRequest: "notification" },
   capabilities: { httpHook: false, permissionApproval: true, notificationHook: false, sessionEnd: false, subagent: false },
   pidField: "claude_pid",
 };

@@ -70,7 +70,12 @@ function latestAuditContextWindow(file, selectedModel) {
     const limit = Number(usage.contextWindow);
     if (Number.isFinite(limit) && limit > 0) return limit;
   }
-  return null;
+  // Cowork creates audit.jsonl lazily. Claude Desktop's selected Claude
+  // families use the normal 200k context window, so a brand-new session can
+  // show an honest, useful denominator before its first audit record lands.
+  return typeof selectedModel === "string" && /^claude-/i.test(selectedModel)
+    ? 200000
+    : null;
 }
 
 function latestTranscriptContextUsage(file, contextWindow) {

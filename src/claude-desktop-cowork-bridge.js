@@ -222,7 +222,11 @@ function createClaudeDesktopCoworkBridge(options = {}) {
 
   return {
     start() {
-      if (timer || process.platform !== "darwin") return;
+      // The session root is macOS-only, but avoiding a platform gate here keeps
+      // the monitor live in packaged Electron variants where the host runtime
+      // can differ from the shell that launched the app. On other platforms the
+      // missing root simply discovers zero sessions.
+      if (timer) return;
       debugLog(`Cowork bridge start root=${root}`);
       poll();
       timer = setInterval(poll, intervalMs);

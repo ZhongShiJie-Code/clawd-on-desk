@@ -196,6 +196,17 @@ describe("state agent icons", () => {
     assert.strictEqual(getAgentIconPath("openclaw"), path.join(AGENT_ICON_DIR, "openclaw.png"));
   });
 
+  it("returns the bundled Claude Desktop app icon", () => {
+    const iconUrl = getAgentIconUrl("claude-desktop");
+
+    assert.strictEqual(new URL(iconUrl).protocol, "file:");
+    assert.strictEqual(
+      path.normalize(fileURLToPath(iconUrl)),
+      path.join(AGENT_ICON_DIR, "claude-desktop.png")
+    );
+    assert.strictEqual(getAgentIconPath("claude-desktop"), path.join(AGENT_ICON_DIR, "claude-desktop.png"));
+  });
+
   it("has canonical runtime PNG icons for every registered agent", () => {
     const runtimeIconFiles = new Set(
       fs.readdirSync(AGENT_ICON_DIR, { withFileTypes: true })

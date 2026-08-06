@@ -2123,6 +2123,25 @@ showDashboard = _dashboard.showDashboard;
 broadcastDashboardSessionSnapshot = _dashboard.broadcastSessionSnapshot;
 sendDashboardI18n = _dashboard.sendI18n;
 
+// Account displays are kept out of the core session state. These readers use
+// the official provider endpoints/export files and only publish sanitized
+// snapshots to the HUD.
+const _deepseekBalance = require("./deepseek-balance")({
+  onChange: () => {
+    try { broadcastSessionHudSnapshot(_state.buildSessionSnapshot()); } catch {}
+  },
+});
+const _deepseekUsage = require("./deepseek-usage")({
+  onChange: () => {
+    try { broadcastSessionHudSnapshot(_state.buildSessionSnapshot()); } catch {}
+  },
+});
+const _deepseekExport = require("./deepseek-export")({
+  onExported: () => {
+    void _deepseekUsage.refresh().catch(() => {});
+  },
+});
+
 // ── First-run onboarding tutorial ──
 // Buckets the installable agents for the tutorial's step 2. We call the
 // detector with skipDefaultIntegrations:false so the default integrations
@@ -2242,6 +2261,8 @@ const _sessionHud = require("./session-hud")({
   get sessionHudShowContextUsage() { return sessionHudShowContextUsage; },
   get sessionHudShowQuota() { return sessionHudShowQuota; },
   get sessionHudPinned() { return sessionHudPinned; },
+  getDeepseekBalanceSnapshot: () => _deepseekBalance.getSnapshot(),
+  getDeepseekUsageSnapshot: () => _deepseekUsage.getSnapshot(),
   get lowPowerIdleMode() { return lowPowerIdleMode; },
   getMiniMode: () => _mini.getMiniMode(),
   getMiniTransitioning: () => _mini.getMiniTransitioning(),
@@ -2266,6 +2287,9 @@ sendSessionHudI18n = _sessionHud.sendI18n;
 getSessionHudReservedOffset = _sessionHud.getHudReservedOffset;
 getSessionHudWindow = _sessionHud.getWindow;
 getQuotaRingWindow = _sessionHud.getQuotaRingWindow;
+_deepseekBalance.start();
+_deepseekUsage.start();
+_deepseekExport.start();
 
 agentRuntime = createAgentRuntimeMain({
   getServer: () => _server,
@@ -2282,6 +2306,7 @@ agentRuntime = createAgentRuntimeMain({
 // ── HTTP server — delegated to src/server.js ──
 const _serverCtx = {
   get manageClaudeHooksAutomatically() { return manageClaudeHooksAutomatically; },
+  handleDeepseekCacheHitPost: (req, res) => _deepseekUsage.handleCacheHitPost(req, res),
   get autoStartWithClaude() { return autoStartWithClaude; },
   get claudeQuotaCollectionEnabled() { return claudeQuotaCollectionEnabled; },
   get doNotDisturb() { return doNotDisturb; },
@@ -4700,6 +4725,9 @@ if (!gotTheLock) {
     _mini.cleanup();
     if (macHideController) macHideController.stop();
     _sessionHud.cleanup();
+    _deepseekBalance.cleanup();
+    _deepseekUsage.cleanup();
+    _deepseekExport.cleanup();
     agentRuntime.cleanup();
     claudeDesktopCoworkBridge.stop();
     topmostRuntime.cleanup();

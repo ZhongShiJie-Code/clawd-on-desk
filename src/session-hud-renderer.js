@@ -185,6 +185,68 @@ const FOLDER_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" 
 const PIN_SVG_FILLED = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
 const PIN_SVG_OUTLINE = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
 
+function formatMoney(value, currency = "CNY") {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+  const cny = String(currency || "").toUpperCase() === "USD" ? amount * 7.2 : amount;
+  return `¥${cny.toFixed(2)}`;
+}
+
+function formatPercent(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "--";
+  const normalized = amount <= 1 ? amount * 100 : amount;
+  return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`;
+}
+
+function createStaticRow(label, values, className = "row-static") {
+  const row = document.createElement("div");
+  row.className = `row ${className}`;
+  const left = document.createElement("div");
+  left.className = "left";
+  const dot = document.createElement("span");
+  dot.className = "dot dot-idle";
+  left.appendChild(dot);
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = label;
+  left.appendChild(title);
+  const right = document.createElement("span");
+  right.className = "right";
+  for (const value of values) {
+    if (!value) continue;
+    const chip = document.createElement("span");
+    chip.className = `meter-chip ${value.className || "meter-cache"}`;
+    chip.textContent = value.text;
+    right.appendChild(chip);
+  }
+  row.appendChild(left);
+  if (right.childNodes.length) row.appendChild(right);
+  return row;
+}
+
+function appendStaticRows() {
+  const balance = snapshot && snapshot.deepseekBalance;
+  if (balance && Array.isArray(balance.entries) && balance.entries.length) {
+    const low = balance.entries.some((entry) => Number(entry.total) < 5);
+    hudEl.appendChild(createStaticRow("DeepSeek", [{
+      text: balance.entries.map((entry) => formatMoney(entry.total, entry.currency)).filter(Boolean).join(" · "),
+      className: low ? "meter-spend" : "meter-cache",
+    }], "row-static row-balance"));
+  }
+  const models = snapshot && snapshot.deepseekUsage && Array.isArray(snapshot.deepseekUsage.models)
+    ? snapshot.deepseekUsage.models
+    : [];
+  for (const model of models) {
+    if (!model || !model.model) continue;
+    const label = model.label || String(model.model).replace(/^deepseek-/, "");
+    hudEl.appendChild(createStaticRow(label, [
+      { text: formatMoney(model.cost, model.currency || "USD"), className: "meter-spend" },
+      { text: formatPercent(model.cacheHitRate), className: "meter-cache" },
+    ], "row-static row-deepseek-usage"));
+  }
+}
+
 function updateUnread(sessions) {
   const now = Date.now();
   const currentIds = new Set(sessions.map((s) => s.id));
@@ -464,10 +526,6 @@ function render() {
   updateUnread(sessions);
   hudEl.replaceChildren();
   hudEl.classList.add("has-pin");
-  // The HUD shows sessions only; account quota now lives in the pet-attached
-  // quota ring window (quota-ring.html).
-  if (!sessions.length) return;
-
   const now = Date.now();
   const { expanded, folded } = splitHudLayout(sessions);
 
@@ -477,6 +535,8 @@ function render() {
   if (folded.length > 0) {
     hudEl.appendChild(createFoldedRow(folded.length));
   }
+
+  appendStaticRows();
 
   hudEl.appendChild(createPinButton(snapshot.hudPinned === true));
 }

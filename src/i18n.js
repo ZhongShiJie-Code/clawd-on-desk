@@ -185,6 +185,8 @@ const i18n = {
     sessionHudActive: "{n} active",
     sessionHudOtherActive: "{n} other active",
     sessionHudLast: "last",
+    sessionHudDeepSeek: "DeepSeek",
+    sessionHudCodex: "Codex",
     sessionHudPinTooltip: "Pin HUD",
     sessionHudUnpinTooltip: "Unpin HUD",
     // Status badges shown in the Sessions dashboard (derived via deriveSessionBadge)
@@ -656,6 +658,8 @@ const i18n = {
     sessionHudActive: "{n} 个活跃",
     sessionHudOtherActive: "其他 {n} 个活跃",
     sessionHudLast: "最近",
+    sessionHudDeepSeek: "DeepSeek",
+    sessionHudCodex: "Codex",
     sessionHudPinTooltip: "固定 HUD",
     sessionHudUnpinTooltip: "取消固定",
     sessionBadgeRunning: "运行中",

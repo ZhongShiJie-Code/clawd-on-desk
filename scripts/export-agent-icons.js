@@ -54,6 +54,8 @@ function lobeSource(originalFilename, extra = {}) {
 const SOURCE_PROVENANCE = Object.freeze({
   "antigravity-cli": lobeSource("antigravity-color.png"),
   "claude-code": lobeSource("claudecode-color.png"),
+  "claude-desktop": { originalFilename: "claude-desktop.png", fallback: true },
+  "claude-desktop-mcp": { originalFilename: "claude-desktop-mcp.png", fallback: true },
   codebuddy: lobeSource("codebuddy-color.png"),
   codewhale: { originalFilename: "codewhale.png", fallback: true },
   codex: lobeSource("openai.png", { contrastTreatment: "neutral-light-tile" }),

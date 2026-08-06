@@ -142,6 +142,22 @@
       "license": "MIT",
       "variant": "light"
     },
+    "claude-desktop": {
+      "agentId": "claude-desktop",
+      "originalFilename": "claude-desktop.png",
+      "sourceFilename": "claude-desktop.png",
+      "sourceType": "png",
+      "sha256": "8664b25cd52e01f5f034405804b3939d5ec8c3986a3f2372b1b1e11889d79ebf",
+      "fallback": true
+    },
+    "claude-desktop-mcp": {
+      "agentId": "claude-desktop-mcp",
+      "originalFilename": "claude-desktop-mcp.png",
+      "sourceFilename": "claude-desktop-mcp.png",
+      "sourceType": "png",
+      "sha256": "8664b25cd52e01f5f034405804b3939d5ec8c3986a3f2372b1b1e11889d79ebf",
+      "fallback": true
+    },
     "codex": {
       "agentId": "codex",
       "originalFilename": "openai.png",
@@ -407,6 +423,18 @@
       "outputFilename": "claude-code.png",
       "outputSha256": "4880214367435ab457515addeecc8b412ef6ae8d211409564a272722253f0dbe",
       "generatedFromSourceSha256": "9ef1d98492f68c5c7766162af827dd4e0c9cb0d76b78fce22798985a792fca63"
+    },
+    "claude-desktop": {
+      "agentId": "claude-desktop",
+      "outputFilename": "claude-desktop.png",
+      "outputSha256": "a69d70b35f475a2e6fe4443d1c626544ba852c2af69562cdb4ec9c1128e1aca3",
+      "generatedFromSourceSha256": "8664b25cd52e01f5f034405804b3939d5ec8c3986a3f2372b1b1e11889d79ebf"
+    },
+    "claude-desktop-mcp": {
+      "agentId": "claude-desktop-mcp",
+      "outputFilename": "claude-desktop-mcp.png",
+      "outputSha256": "a69d70b35f475a2e6fe4443d1c626544ba852c2af69562cdb4ec9c1128e1aca3",
+      "generatedFromSourceSha256": "8664b25cd52e01f5f034405804b3939d5ec8c3986a3f2372b1b1e11889d79ebf"
     },
     "codex": {
       "agentId": "codex",

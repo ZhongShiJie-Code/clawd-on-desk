@@ -687,6 +687,9 @@ function routeHttpRequest(req, res, remoteProfile = null) {
         createRequestHookRecorder,
         remoteProfile,
       });
+    } else if (req.method === "POST" && req.url === "/cache-hit"
+      && typeof ctx.handleDeepseekCacheHitPost === "function") {
+      ctx.handleDeepseekCacheHitPost(req, res);
     } else {
       res.writeHead(404);
       res.end();

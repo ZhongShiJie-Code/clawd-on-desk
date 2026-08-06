@@ -1,0 +1,19 @@
+{
+  "version": "0.14.0",
+  "releaseType": "custom",
+  "sourceBranch": "custom/v0.14.0-source",
+  "upstreamRepository": "https://github.com/rullerzhou-afk/clawd-on-desk.git",
+  "originRepository": "https://github.com/ZhongShiJie-Code/clawd-on-desk.git",
+  "upstreamBaseCommit": "ce6acbc7ee4ef85029d4a1a870edb667cfd878c3",
+  "included": [
+    "Claude Desktop Cowork mapping and focus",
+    "DeepSeek balance, official usage export and cache-hit reporting",
+    "Official Codex subscription quota ring remains enabled",
+    "Contained Claude Desktop HUD icons"
+  ],
+  "excluded": [
+    "mobile/PWA control",
+    "OpenClaw remote stop control",
+    "credentials, browser profiles, app.asar and local backups"
+  ]
+}

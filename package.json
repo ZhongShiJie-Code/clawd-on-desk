@@ -20,6 +20,7 @@
     "test": "node test/run-tests.js",
     "audit:assets": "node scripts/audit-repository-assets.js",
     "verify:release": "node scripts/verify-release-version.js",
+    "verify:custom": "node scripts/verify-custom-release.js",
     "create-theme": "node scripts/create-theme.js",
     "export-agent-icons": "node scripts/export-agent-icons.js",
     "install:claude-hooks": "node hooks/install.js",

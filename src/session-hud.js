@@ -56,9 +56,26 @@ function isHudSession(session) {
   return !!session && !session.headless && session.state !== "sleeping" && !session.hiddenFromHud;
 }
 
+function hasDeepseekBalanceRow(snapshot) {
+  return !!(snapshot && snapshot.deepseekBalance);
+}
+
+function deepseekUsageRowCount(snapshot) {
+  const models = snapshot && snapshot.deepseekUsage && Array.isArray(snapshot.deepseekUsage.models)
+    ? snapshot.deepseekUsage.models
+    : [];
+  return models.length;
+}
+
+function hasDeepseekUsageRows(snapshot) {
+  return deepseekUsageRowCount(snapshot) > 0;
+}
+
 function snapshotHasVisibleSessions(snapshot) {
   const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
-  return sessions.some(isHudSession);
+  return sessions.some(isHudSession)
+    || hasDeepseekBalanceRow(snapshot)
+    || hasDeepseekUsageRows(snapshot);
 }
 
 function evaluateBaseEligible({
@@ -161,7 +178,9 @@ function getHudMaxExpandedRows(showStateLabels = true) {
 
 function computeHudLayout(snapshot, options = {}) {
   const sessions = (snapshot && Array.isArray(snapshot.sessions)) ? snapshot.sessions : [];
-  if (sessions.length === 0) return { expanded: [], folded: [], rowCount: 0 };
+  const staticRows = (hasDeepseekBalanceRow(snapshot) ? 1 : 0)
+    + deepseekUsageRowCount(snapshot);
+  if (sessions.length === 0) return { expanded: [], folded: [], rowCount: staticRows };
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const orderedIds = (snapshot && Array.isArray(snapshot.orderedIds))
     ? snapshot.orderedIds
@@ -173,7 +192,7 @@ function computeHudLayout(snapshot, options = {}) {
   const maxExpandedRows = getHudMaxExpandedRows(options.showStateLabels);
   const expanded = visible.slice(0, maxExpandedRows);
   const folded = visible.slice(maxExpandedRows);
-  const rowCount = expanded.length + (folded.length > 0 ? 1 : 0);
+  const rowCount = expanded.length + (folded.length > 0 ? 1 : 0) + staticRows;
   return { expanded, folded, rowCount };
 }
 
@@ -348,6 +367,18 @@ module.exports = function initSessionHud(ctx) {
     });
   }
 
+  function buildHudSnapshotPayload(snapshot = latestSnapshot) {
+    return {
+      ...(snapshot || {}),
+      deepseekBalance: typeof ctx.getDeepseekBalanceSnapshot === "function"
+        ? ctx.getDeepseekBalanceSnapshot()
+        : null,
+      deepseekUsage: typeof ctx.getDeepseekUsageSnapshot === "function"
+        ? ctx.getDeepseekUsageSnapshot()
+        : null,
+    };
+  }
+
   function shouldShow(snapshot = latestSnapshot) {
     if (!baseEligible(snapshot)) return false;
     if (ctx.sessionHudPinned === true) return true;
@@ -413,7 +444,7 @@ module.exports = function initSessionHud(ctx) {
     const hasSessions = snapshotHasVisibleSessions(snapshot);
     let contentBounds = null;
     if (hudEnabled && hasSessions) {
-      const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+      const layout = computeHudLayout(buildHudSnapshotPayload(snapshot), { showStateLabels: ctx.sessionHudShowStateLabels !== false });
       const height = computeHudHeight(layout.rowCount);
       const computed = computeSessionHudBounds({ hitRect, anchorRect, workArea, width, height, scale, widthScale });
       contentBounds = computed && computed.contentBounds;
@@ -615,7 +646,7 @@ module.exports = function initSessionHud(ctx) {
     if (!snapshot || !hudWindow || hudWindow.isDestroyed() || !didFinishLoad) return;
     if (!hudWindow.webContents || hudWindow.webContents.isDestroyed()) return;
     hudWindow.webContents.send("session-hud:session-snapshot", {
-      ...snapshot,
+      ...buildHudSnapshotPayload(snapshot),
       hudShowStateLabels: ctx.sessionHudShowStateLabels !== false,
       hudShowElapsed: ctx.sessionHudShowElapsed !== false,
       hudShowContextUsage: ctx.sessionHudShowContextUsage !== false,
@@ -829,7 +860,7 @@ module.exports = function initSessionHud(ctx) {
     const workArea = typeof ctx.getNearestWorkArea === "function"
       ? ctx.getNearestWorkArea(cx, cy)
       : { x: 0, y: 0, width: 1280, height: 800 };
-    const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+    const layout = computeHudLayout(buildHudSnapshotPayload(snapshot), { showStateLabels: ctx.sessionHudShowStateLabels !== false });
     const height = computeHudHeight(layout.rowCount);
     const width = getHudWidth(
       ctx.sessionHudShowElapsed !== false,
@@ -985,6 +1016,9 @@ module.exports = function initSessionHud(ctx) {
 module.exports.__test = {
   computeSessionHudBounds,
   computeHudLayout,
+  hasDeepseekBalanceRow,
+  hasDeepseekUsageRows,
+  deepseekUsageRowCount,
   getHudMaxExpandedRows,
   computeHudHeight,
   countQuotaCoins,

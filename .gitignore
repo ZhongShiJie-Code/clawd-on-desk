@@ -61,6 +61,8 @@ docs/**
 !docs/releases/release-v0.12.0.md
 !docs/releases/release-v0.13.0.md
 !docs/releases/release-v0.14.0.md
+!docs/releases/release-custom-v0.14.0.md
+!docs/project/custom-release-workflow.md
 
 # Temp files from testing
 .tmp_*
@@ -104,9 +106,11 @@ scripts/*
 !scripts/create-theme.js
 !scripts/export-agent-icons.js
 !scripts/verify-electron-install.js
+!scripts/launch-claude-direct.js
 !scripts/audit-repository-assets.js
 !scripts/assert-no-retired-telegram-sidecar.js
 !scripts/verify-release-version.js
+!scripts/verify-custom-release.js
 
 # oh-my-cursor state
 .omc/

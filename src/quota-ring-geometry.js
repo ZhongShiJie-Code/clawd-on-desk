@@ -36,6 +36,7 @@ const RING_PROVIDERS = [
 const COIN_SIZE = 26; // outer ring diameter
 const COIN_GAP = 10; // vertical gap between stacked coins
 const READOUT_W = 44; // "%" + window/source column, outer side of each coin
+const DEEPSEEK_READOUT_W = 64; // balance readout; cache rates live in the rings
 const COIN_READOUT_GAP = 6; // gap between coin and its readout
 const CLUSTER_PAD = 6; // inner padding around the cluster content
 const OVERFLOW_GAP = 8;
@@ -117,6 +118,18 @@ function providerHasDrawableQuota(source, def) {
     group[field] && typeof group[field] === "object");
 }
 
+function hasDeepseekSummary(snapshot) {
+  const usage = snapshot && snapshot.deepseekUsage;
+  const models = usage && Array.isArray(usage.models) ? usage.models : [];
+  const hasCacheRate = models.some((entry) => Number.isFinite(Number(entry && entry.cacheHitRate)));
+  const balance = snapshot && snapshot.deepseekBalance;
+  const hasBalance = balance
+    && balance.status === "ok"
+    && Array.isArray(balance.entries)
+    && balance.entries.length > 0;
+  return hasCacheRate || !!hasBalance;
+}
+
 // Total coins a snapshot draws: one per (source, provider-with-quota).
 function countQuotaCoins(snapshot, showQuota) {
   if (showQuota === false) return 0;
@@ -128,6 +141,7 @@ function countQuotaCoins(snapshot, showQuota) {
       if (providerHasDrawableQuota(source, def)) count += 1;
     }
   }
+  if (hasDeepseekSummary(snapshot)) count += 1;
   return count;
 }
 
@@ -153,13 +167,14 @@ function quotaSeverity(usedPercent) {
 // count up to the cap, then adds an overflow row. The ring fills with USED
 // percent (matching the Dashboard) and an empty ring is the reset state, so
 // the semantics read from the form — no persistent "used" label needed.
-function ringClusterContentSize(coinCount) {
+function ringClusterContentSize(coinCount, hasDeepseek = false) {
   const total = Math.max(0, Math.floor(Number(coinCount) || 0));
   const visible = Math.min(total, RING_MAX_COINS);
   const overflow = Math.max(0, total - visible);
   const rows = Math.max(1, visible);
 
-  const width = CLUSTER_PAD * 2 + READOUT_W + COIN_READOUT_GAP + COIN_SIZE;
+  const readoutWidth = hasDeepseek ? DEEPSEEK_READOUT_W : READOUT_W;
+  const width = CLUSTER_PAD * 2 + readoutWidth + COIN_READOUT_GAP + COIN_SIZE;
   let height = CLUSTER_PAD * 2
     + rows * COIN_SIZE
     + Math.max(0, rows - 1) * COIN_GAP;
@@ -189,6 +204,7 @@ function computeQuotaRingBounds({
   anchorRect,
   workArea,
   coinCount,
+  hasDeepseek = false,
   scale = 1,
   sidePreference,
   avoidRects = [],
@@ -201,7 +217,7 @@ function computeQuotaRingBounds({
   if (total <= 0) return null;
 
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  const content = ringClusterContentSize(total);
+  const content = ringClusterContentSize(total, hasDeepseek);
   const contentW = Math.round(content.width * s);
   const contentH = Math.round(content.height * s);
   const gap = Math.round(RING_PET_GAP * s);
@@ -260,6 +276,7 @@ module.exports = {
   countQuotaCoins,
   formatWindowLabel,
   quotaSeverity,
+  hasDeepseekSummary,
   ringClusterContentSize,
   resolveRingSide,
   computeQuotaRingBounds,
@@ -270,6 +287,7 @@ module.exports = {
     COIN_SIZE,
     COIN_GAP,
     READOUT_W,
+    DEEPSEEK_READOUT_W,
     COIN_READOUT_GAP,
     CLUSTER_PAD,
     OVERFLOW_GAP,

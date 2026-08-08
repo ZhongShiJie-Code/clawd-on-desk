@@ -146,7 +146,6 @@ function handleStatePost(req, res, options) {
     isWinHost = process.platform === "win32",
     captureForegroundWindowsTerminal = () => null,
     remoteProfile = null,
-    isClaudeStatuslineMetadataAllowed = () => true,
   } = options;
   let body = "";
   let bodySize = 0;
@@ -348,14 +347,6 @@ function handleStatePost(req, res, options) {
         res.end();
         return;
       }
-      // The persisted preference authorizes statusline telemetry only for the
-      // local profile. Remote SSH profiles have their own deployed lifecycle
-      // and must keep reporting even when this machine's local statusline is
-      // disabled. A WSL session still belongs to profileId="local" — its
-      // client-supplied host label must not bypass the local gate.
-      const localClaudeStatuslineMetadataAllowed = agentId !== "claude-code"
-        || trustedProfileId !== "local"
-        || isClaudeStatuslineMetadataAllowed() === true;
       // Account quota goes to the session-independent per-source store,
       // regardless of POST shape — it must survive with no live session at
       // all ("check the remote's quota before starting work"), so it is
@@ -365,13 +356,12 @@ function handleStatePost(req, res, options) {
       // remote's reverse tunnel lands on the same local port) — same trust
       // model as the session cards' host grouping: machines the user
       // deployed Clawd hooks to. The store shape-sanitizes the label.
-      const acceptedClaudeQuota = localClaudeStatuslineMetadataAllowed ? claudeQuota : null;
       if (typeof ctx.updateAccountQuota === "function"
-        && (antigravityQuota || acceptedClaudeQuota || codexQuota || codexSparkQuota)) {
+        && (antigravityQuota || claudeQuota || codexQuota || codexSparkQuota)) {
         const quotaSource = trustedProfileId === "local" ? host : `remote:${trustedProfileId}`;
         ctx.updateAccountQuota(quotaSource, {
           antigravityQuota,
-          claudeQuota: acceptedClaudeQuota,
+          claudeQuota,
           codexQuota,
           ...(codexSparkQuota ? { codexSparkQuota } : {}),
           ...(trustedProfileId === "local" ? {} : { displayHost: host }),
@@ -420,17 +410,8 @@ function handleStatePost(req, res, options) {
         // hook events the diagnostics exist to show. 204 either way — the
         // statusline script never reads the response, and "session unknown"
         // is the designed drop, not an error.
-        if (
-          contextUsage
-          && localClaudeStatuslineMetadataAllowed
-          && typeof ctx.updateSessionMetadata === "function"
-        ) {
-          ctx.updateSessionMetadata(session_id || "default", {
-            contextUsage,
-            contextUsageOrigin: agentId === "claude-code" && contextUsage.source === "claude"
-              ? "claude-statusline"
-              : null,
-          });
+        if (contextUsage && typeof ctx.updateSessionMetadata === "function") {
+          ctx.updateSessionMetadata(session_id || "default", { contextUsage });
         }
         res.writeHead(204, { [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID });
         res.end();
@@ -648,9 +629,6 @@ function handleStatePost(req, res, options) {
             displayHint: display_svg,
             sessionTitle,
             contextUsage,
-            contextUsageOrigin: agentId === "claude-code" && contextUsage && contextUsage.source === "claude"
-              ? "claude-transcript"
-              : null,
             assistantLastOutput,
             assistantLastOutputTruncated,
             toolName,

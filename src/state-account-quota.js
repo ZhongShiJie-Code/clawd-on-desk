@@ -389,24 +389,6 @@ function createAccountQuotaStore(options = {}) {
     return changed || seenAdvanced;
   }
 
-  // Remove one provider without disturbing sibling providers carried by the
-  // same source. The optional predicate receives the normalized source key
-  // ("" = this machine) and lets callers preserve independently-authorized
-  // sources such as Remote SSH profiles.
-  function clearProvider(providerKey, shouldClearSource = () => true) {
-    if (!Object.prototype.hasOwnProperty.call(QUOTA_PROVIDER_FIELDS, providerKey)) return 0;
-    const predicate = typeof shouldClearSource === "function" ? shouldClearSource : () => true;
-    let cleared = 0;
-    for (const [sourceKey, record] of sources) {
-      if (!record[providerKey] || !predicate(sourceKey, record)) continue;
-      delete record[providerKey];
-      cleared++;
-      if (!QUOTA_PROVIDER_KEYS.some((key) => !!record[key])) sources.delete(sourceKey);
-    }
-    if (cleared) schedulePersist();
-    return cleared;
-  }
-
   // Renderer-facing view: expired buckets dropped (wall-clock window reset),
   // local source first, remotes sorted by host for a stable UI order.
   //
@@ -525,7 +507,7 @@ function createAccountQuotaStore(options = {}) {
 
   load();
 
-  return { update, clearProvider, snapshot, prune, flush };
+  return { update, snapshot, prune, flush };
 }
 
 module.exports = {

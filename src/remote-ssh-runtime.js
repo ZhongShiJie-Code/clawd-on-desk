@@ -14,8 +14,6 @@
 //   classifyStderr(stderr)     — pure error classifier
 //   classifyProbeExit(code)    — pure probe-exit-code classifier
 //   buildProbeCommand(port)    — builds the remote Node health probe command
-//   tunnelTargetKey(profile)   — normalized reverse-tunnel target identity
-//   checkSecureConnectReadiness(profile) — local fail-closed deployment gate
 //
 // Stateful (factory):
 //
@@ -72,7 +70,6 @@ const PROBE_MIN_GAP_MS = 250;
 const PROBE_CHILD_TIMEOUT_MS = 5000;
 const BACKOFF_SCHEDULE_MS = [5000, 15000, 45000, 120000, 300000];
 const UNKNOWN_STRIKES_LIMIT = 3;
-const FORWARD_RECOVERY_FAILURE_LIMIT = 4;
 
 const CLAWD_SERVER_HEADER = "x-clawd-server";
 const CLAWD_SERVER_ID = "clawd-on-desk";
@@ -339,51 +336,6 @@ function backoffMsForAttempt(attempt) {
   return BACKOFF_SCHEDULE_MS[idx];
 }
 
-function tunnelTargetKey(profile) {
-  return JSON.stringify({
-    profileId: profile && profile.id || "",
-    host: profile && profile.host || "",
-    port: Number.isInteger(profile && profile.port) ? profile.port : 22,
-    identityFile: profile && profile.identityFile || "",
-    remoteForwardPort: Number.isInteger(profile && profile.remoteForwardPort)
-      ? profile.remoteForwardPort
-      : null,
-    installId: profile && profile.installId || "",
-    runtimeMode: profile && profile.runtimeMode || "account-default",
-    runtimeKey: profile && profile.runtimeKey || "account-default",
-    layoutVersion: Number.isInteger(profile && profile.layoutVersion)
-      ? profile.layoutVersion
-      : 1,
-  });
-}
-
-function checkSecureConnectReadiness(profile) {
-  const failure = (detail) => ({
-    ok: false,
-    kind: "permanent",
-    reason: "deployment_required",
-    detail,
-    hint: "remoteSshErrDeploymentRequired",
-    message: "Remote SSH hooks are not deployed for this target. Deploy or repair hooks before connecting.",
-  });
-  if (!Number.isFinite(profile && profile.lastDeployedAt) || profile.lastDeployedAt <= 0) {
-    return failure("deployment_stamp_missing");
-  }
-  try {
-    resolveRemoteRuntimeLayout({
-      runtimeMode: profile && profile.runtimeMode,
-      runtimeKey: profile && profile.runtimeKey,
-      remoteHome: profile && profile.remoteHome,
-    });
-  } catch {
-    return failure("secure_layout_missing");
-  }
-  if (!acceptedRoutingNonces(profile).length) {
-    return failure("secure_identity_missing");
-  }
-  return { ok: true };
-}
-
 // ── Runtime factory ──
 
 function createRemoteSshRuntime(deps = {}) {
@@ -441,9 +393,6 @@ function createRemoteSshRuntime(deps = {}) {
       backoffTimer: null,
       retryAttempt: 0,
       unknownStrikes: 0,
-      healthyTunnelTargetKey: null,
-      recoveryTargetKey: null,
-      forwardRecoveryFailures: 0,
       stopped: false,
     };
   }
@@ -473,7 +422,6 @@ function createRemoteSshRuntime(deps = {}) {
       lastError: state.lastError,
       lastErrorReason: state.lastErrorReason,
       retryAttempt: state.retryAttempt,
-      forwardRecoveryFailures: state.forwardRecoveryFailures,
       ...(ingressStatus ? {
         ingressPort: ingressStatus.port,
         ingressRejectedCount: ingressStatus.rejectedCount,
@@ -497,18 +445,12 @@ function createRemoteSshRuntime(deps = {}) {
     if (!profile || !profile.id) throw new Error("refreshProfile: profile.id required");
     const state = states.get(profile.id);
     if (!state) return false;
-    const nextProfile = {
+    state.profile = {
       ...profile,
       ...(state.profile && state.profile.installId && !profile.installId
         ? { installId: state.profile.installId }
         : {}),
     };
-    const targetChanged = tunnelTargetKey(state.profile) !== tunnelTargetKey(nextProfile);
-    state.profile = nextProfile;
-    if (targetChanged) {
-      resetRecoveryContext(state);
-      clearRemoteShellCache(state);
-    }
     emitStatus(state);
     return true;
   }
@@ -519,12 +461,11 @@ function createRemoteSshRuntime(deps = {}) {
     if (!profile || !profile.id) throw new Error("connect: profile.id required");
     let state = states.get(profile.id);
     if (state) {
-      const targetChanged = tunnelTargetKey(state.profile) !== tunnelTargetKey(profile);
+      const targetChanged = remoteShellCacheKey(state.profile) !== remoteShellCacheKey(profile);
       // Replace profile snapshot — caller may have just edited fields.
       state.profile = profile;
       if (targetChanged) {
         clearRemoteShellCache(state);
-        resetRecoveryContext(state);
       }
       // If already connecting / connected, no-op (idempotent).
       if (state.status === "connecting" || state.status === "connected"
@@ -535,7 +476,6 @@ function createRemoteSshRuntime(deps = {}) {
       state.retryAttempt = 0;
       state.unknownStrikes = 0;
       state.stopped = false;
-      resetRecoveryContext(state);
       clearRemoteShellCache(state);
     } else {
       state = newState(profile);
@@ -558,6 +498,12 @@ function createRemoteSshRuntime(deps = {}) {
       lastErrorReason: null,
     });
 
+    const sshPreflight = getSshPreflightFailure();
+    if (sshPreflight) {
+      finishFailure(state, sshPreflight);
+      return;
+    }
+
     if (typeof createProfileIngress === "function") {
       if (state.profile.runtimeMode === "profile-isolated"
         && state.profile.isolatedActive !== true) {
@@ -569,20 +515,30 @@ function createRemoteSshRuntime(deps = {}) {
         });
         return;
       }
-      const readiness = checkSecureConnectReadiness(state.profile);
-      if (!readiness.ok) {
-        finishFailure(state, readiness);
+      try {
+        resolveRemoteRuntimeLayout({
+          runtimeMode: state.profile.runtimeMode,
+          runtimeKey: state.profile.runtimeKey,
+          remoteHome: state.profile.remoteHome,
+        });
+      } catch {
+        finishFailure(state, {
+          kind: "permanent",
+          reason: "secure_layout_missing",
+          hint: "remoteSshErrSecureIdentityMissing",
+          message: "The verified remote runtime layout is missing; deploy or repair hooks before connecting.",
+        });
         return;
       }
-    }
-
-    const sshPreflight = getSshPreflightFailure();
-    if (sshPreflight) {
-      finishFailure(state, sshPreflight);
-      return;
-    }
-
-    if (typeof createProfileIngress === "function") {
+      if (!acceptedRoutingNonces(state.profile).length) {
+        finishFailure(state, {
+          kind: "permanent",
+          reason: "secure_identity_missing",
+          hint: "remoteSshErrSecureIdentityMissing",
+          message: "Secure Remote SSH identity is missing; deploy or repair hooks before connecting.",
+        });
+        return;
+      }
       ensureProfileIngress(state);
       return;
     }
@@ -747,13 +703,6 @@ function createRemoteSshRuntime(deps = {}) {
     if (!state) return;
     state.remoteShell = null;
     state.remoteShellTarget = null;
-  }
-
-  function resetRecoveryContext(state, { clearHealthy = true } = {}) {
-    if (!state) return;
-    state.recoveryTargetKey = null;
-    state.forwardRecoveryFailures = 0;
-    if (clearHealthy) state.healthyTunnelTargetKey = null;
   }
 
   function markRemoteShell(state, shell, target) {
@@ -952,23 +901,6 @@ function createRemoteSshRuntime(deps = {}) {
     const cls = classifyStderr(stderr);
     const wasConnected = state.status === "connected";
 
-    const currentTargetKey = tunnelTargetKey(state.profile);
-    const canRecoverForwardConflict = cls.reason === "forward_failed"
-      && state.recoveryTargetKey === currentTargetKey;
-    if (canRecoverForwardConflict) {
-      state.forwardRecoveryFailures += 1;
-      state.unknownStrikes = 0;
-      if (state.forwardRecoveryFailures < FORWARD_RECOVERY_FAILURE_LIMIT) {
-        scheduleReconnect(state, {
-          message: stderrSummary(stderr) || `ssh exited ${formatExit(code, signal)}`,
-          hint: "remoteSshErrForwardRetrying",
-          lastErrorReason: "forward_recovery_conflict",
-          wasConnected: false,
-        });
-        return;
-      }
-    }
-
     if (cls.kind === "permanent") {
       finishFailure(state, {
         kind: "permanent",
@@ -1154,8 +1086,6 @@ function createRemoteSshRuntime(deps = {}) {
     cleanupProbeLoop(state);
     state.retryAttempt = 0;
     state.unknownStrikes = 0;
-    state.healthyTunnelTargetKey = tunnelTargetKey(state.profile);
-    resetRecoveryContext(state, { clearHealthy: false });
     setStatus(state, "connected", {
       message: null,
       hint: null,
@@ -1255,15 +1185,6 @@ function createRemoteSshRuntime(deps = {}) {
 
   function scheduleReconnect(state, { message, hint, lastErrorReason, wasConnected }) {
     if (state.stopped) return;
-    if (wasConnected) {
-      const currentTargetKey = tunnelTargetKey(state.profile);
-      if (state.healthyTunnelTargetKey === currentTargetKey) {
-        state.recoveryTargetKey = currentTargetKey;
-        state.forwardRecoveryFailures = 0;
-      } else {
-        resetRecoveryContext(state);
-      }
-    }
     state.lastError = message;
     state.lastErrorReason = lastErrorReason;
     state.message = message;
@@ -1282,6 +1203,9 @@ function createRemoteSshRuntime(deps = {}) {
       if (state.stopped) return;
       startConnect(state);
     }, delay);
+    // Suppress the unused wasConnected — kept in signature for future
+    // differentiation between drop-while-connected vs. failed-to-connect UX.
+    void wasConnected;
   }
 
   function finishFailure(state, { reason, hint, message }) {
@@ -1296,7 +1220,6 @@ function createRemoteSshRuntime(deps = {}) {
     }
     state.remoteNodeResolveInFlight = false;
     closeProfileIngress(state);
-    resetRecoveryContext(state);
     state.stopped = true;
     setStatus(state, "failed", {
       message: message || hint || reason,
@@ -1325,7 +1248,6 @@ function createRemoteSshRuntime(deps = {}) {
     state.unknownStrikes = 0;
     state.remoteNodeResolveInFlight = false;
     closeProfileIngress(state);
-    resetRecoveryContext(state);
     clearRemoteShellCache(state);
     setStatus(state, "idle", {
       message: null,
@@ -1363,7 +1285,6 @@ function createRemoteSshRuntime(deps = {}) {
       state.backoffTimer = null;
       state.remoteNodeResolveInFlight = false;
       closeProfileIngress(state);
-      resetRecoveryContext(state);
       if (state.sshChild) killChild(state.sshChild);
       state.sshChild = null;
     }
@@ -1443,8 +1364,6 @@ module.exports = {
   classifyProbeExit,
   buildProbeCommand,
   backoffMsForAttempt,
-  tunnelTargetKey,
-  checkSecureConnectReadiness,
   looksLikeWindowsCmdStderr,
   WINDOWS_CMD_STDERR_RX,
   // factory
@@ -1457,5 +1376,4 @@ module.exports = {
   PROBE_CHILD_TIMEOUT_MS,
   BACKOFF_SCHEDULE_MS,
   UNKNOWN_STRIKES_LIMIT,
-  FORWARD_RECOVERY_FAILURE_LIMIT,
 };

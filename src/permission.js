@@ -890,6 +890,9 @@ function buildAutoApproveElicitationAnswers(toolInput) {
 
 function maybeAutoApprovePermission(permEntry) {
   if (!permEntry) return false;
+  // Claude Desktop owns the real decision. The Clawd bubble is only a mirror
+  // and must never silently bypass Claude's native permission card.
+  if (permEntry.isClaudeDesktop) return false;
   if (isPassiveNotifyEntry(permEntry)) return false;
   const mode = typeof ctx.getEffectivePermissionAutomationMode === "function"
     ? ctx.getEffectivePermissionAutomationMode(permEntry, { sessionOnly: false })
@@ -1029,7 +1032,12 @@ function showPermissionBubble(permEntry) {
       // has no native permission UI, so its opt-in plugin gate treats this as
       // a retryable block. In every case we avoid fabricating a user denial.
       // CC/CodeBuddy still get an explicit deny for this user-close action.
-      const behavior = (permEntry.isQwenCode || permEntry.isCopilotCli || permEntry.isHermes) ? "no-decision" : "deny";
+      const behavior = (
+        permEntry.isQwenCode
+        || permEntry.isCopilotCli
+        || permEntry.isHermes
+        || permEntry.isClaudeDesktop
+      ) ? "no-decision" : "deny";
       resolvePermissionEntry(permEntry, behavior, "Bubble window closed by user");
     }
     repositionDependentBubbles();
@@ -1247,6 +1255,11 @@ function buildPermissionBubblePayload(permEntry) {
     // converted into a retryable block by the plugin. Clarify elicitation is
     // different and can hand control to Hermes' native clarification UI.
     isHermes: permEntry.isHermes || false,
+    isClaudeDesktop: permEntry.isClaudeDesktop || false,
+    claudeDesktopActions: Array.isArray(permEntry.claudeDesktopActions)
+      ? permEntry.claudeDesktopActions
+      : [],
+    sessionTitle: permEntry.sessionTitle || (sess && sess.sessionTitle) || null,
     // Display-only detail for the passive Kimi notify card: the real tool
     // name plus the whitelisted tool_input subset let the renderer reuse the
     // standard cue path (formatDetail) while the card stays dismiss-only.
@@ -1505,17 +1518,10 @@ function buildRemoteApprovalPayload(permEntry) {
     sessionFolder ? `${t("approvalDetailFolder")}: ${sessionFolder}` : null,
     `${t("approvalDetailSummary")}: ${summary}`,
   ].filter(Boolean).join("\n");
-  const fields = [
-    { label: t("approvalDetailAgent"), value: agentId },
-    { label: t("approvalDetailTool"), value: toolName },
-    sessionFolder ? { label: t("approvalDetailFolder"), value: sessionFolder } : null,
-    { label: t("approvalDetailSummary"), value: summary },
-  ].filter(Boolean);
   const suggestionButtons = buildRemoteSuggestionButtons(permEntry);
   const payload = {
     title: interpolate(interpolate(t("approvalRequestsTitle"), "{agent}", agentId), "{tool}", toolName),
     detail,
-    fields,
   };
   if (suggestionButtons.length > 0) payload.suggestions = suggestionButtons;
   return payload;
@@ -2491,6 +2497,12 @@ function handleDecide(event, behavior) {
         endSessionTrustConfirmation(perm, { rearm: true });
         syncPermissionBubbleContent(perm);
       });
+    }
+    return;
+  }
+  if (perm.isClaudeDesktop) {
+    if (typeof ctx.handleClaudeDesktopPermissionDecision === "function") {
+      ctx.handleClaudeDesktopPermissionDecision(perm, behavior);
     }
     return;
   }

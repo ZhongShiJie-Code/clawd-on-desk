@@ -25,6 +25,16 @@ function getCodexThreadUrl(entry) {
   return threadId ? `codex://threads/${threadId}` : null;
 }
 
+// Claude Desktop sessions expose a stable local workspace path but no
+// terminal PID. Use that path only to make the HUD click target actionable;
+// it must not affect session identity, deduplication, or global state priority.
+function isClaudeDesktopFocusEntry(entry) {
+  if (!entry || entry.agentId !== "claude-code") return false;
+  if (entry.host || entry.headless === true || entry.platform === "webui") return false;
+  const cwd = normalizeString(entry.cwd).replace(/\\/g, "/").replace(/\/+$/, "");
+  return /\/Claude-3p\/local-agent-mode-sessions\/[^/]+\/[^/]+\/local_[^/]+\/outputs$/.test(cwd);
+}
+
 function hasSupportedOrcaPaneTarget(entry, options = {}) {
   const paneKey = normalizeString(entry && entry.orcaPaneKey);
   if (!paneKey || paneKey.length > 256) return false;
@@ -55,6 +65,10 @@ function getSessionFocusTarget(entry, options = {}) {
     return { canFocus: true, type: "codex-thread", url: codexThreadUrl };
   }
 
+  if (isClaudeDesktopFocusEntry(entry)) {
+    return { canFocus: true, type: "claude-desktop", url: null };
+  }
+
   if (entry.sourcePid) {
     return { canFocus: true, type: "terminal", url: null };
   }
@@ -83,5 +97,6 @@ module.exports = {
   getCodexThreadUrl,
   getFocusableLocalHudSessionIds,
   getSessionFocusTarget,
+  isClaudeDesktopFocusEntry,
   isFocusableLocalHudSession,
 };

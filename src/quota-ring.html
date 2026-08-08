@@ -85,6 +85,18 @@ body { padding: 6px 6px 8px; }
   text-shadow: var(--halo);
   white-space: nowrap;
 }
+.deepseek-readout {
+  width: 64px;
+}
+.deepseek-readout .balance {
+  font-size: 9.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.deepseek-readout .balance.balance-ok { color: var(--sev-ok); }
+.deepseek-readout .balance.balance-low { color: var(--sev-hot); }
+.deepseek-coin-row .coin { margin-left: 0; }
 .coin-row.is-reset .readout .pct { color: var(--ink-soft); }
 .coin-row.is-stale { opacity: 0.72; }
 

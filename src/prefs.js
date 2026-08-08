@@ -56,7 +56,7 @@ const {
   PET_ACCESSORY_IDS,
 } = require("./pet-customization-catalog");
 
-const CURRENT_VERSION = 14;
+const CURRENT_VERSION = 13;
 const DEFAULT_INTEGRATION_INSTALLED_IDS = Object.freeze(["claude-code", "codex"]);
 const DEFAULT_INTEGRATION_INSTALLED_SET = new Set(DEFAULT_INTEGRATION_INSTALLED_IDS);
 
@@ -111,14 +111,6 @@ const SCHEMA = {
     defaultFactory: () => null,
     normalize: normalizeSettingsWindowBounds,
   },
-  // Normal-state geometry for the resizable Sessions/Dashboard window. Same
-  // contract as settingsWindowBounds: `null` means the user has not placed it
-  // yet, so the runtime keeps the computed pet/Settings-anchored placement.
-  dashboardWindowBounds: {
-    type: "object",
-    defaultFactory: () => null,
-    normalize: normalizeSettingsWindowBounds,
-  },
   size: {
     type: "string",
     default: "P:9",
@@ -168,11 +160,9 @@ const SCHEMA = {
   sessionHudShowElapsed: { type: "boolean", default: false },
   sessionHudShowContextUsage: { type: "boolean", default: true },
   sessionHudShowQuota: { type: "boolean", default: true },
-  // Claude Code exposes the reported context window and subscription limits
-  // through its visible, single-slot statusline. The historical key name is
-  // retained for compatibility, but it authorizes the whole local Claude
-  // statusline metadata stream. Keep it opt-in so a fresh Clawd install never
-  // changes the user's terminal UI without an explicit choice.
+  // Claude Code exposes subscription limits only through its visible,
+  // single-slot statusline. Keep collection opt-in so a fresh Clawd install
+  // never changes the user's terminal UI without an explicit choice.
   claudeQuotaCollectionEnabled: { type: "boolean", default: false },
   quotaMergeSources: { type: "boolean", default: false },
   sessionHudCleanupDetached: { type: "boolean", default: true },
@@ -760,11 +750,6 @@ function migrate(raw) {
   // an absent/null value intentionally keeps the existing centered placement.
   if (out.version < 13) {
     out.version = 13;
-  }
-  // v13 -> v14: Dashboard-window geometry persistence, same contract as the
-  // Settings step above.
-  if (out.version < 14) {
-    out.version = 14;
   }
   if ((typeof out.version === "number" ? out.version : 0) < CURRENT_VERSION) {
     out.version = CURRENT_VERSION;

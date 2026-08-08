@@ -8,15 +8,12 @@ const DEFAULT_WIDTH = 480;
 const DEFAULT_HEIGHT = 600;
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 400;
-const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 const LIGHT_BACKGROUND = "#f5f5f7";
 const DARK_BACKGROUND = "#1c1c1f";
 
 function getDashboardBackgroundColor() {
   return nativeTheme.shouldUseDarkColors ? DARK_BACKGROUND : LIGHT_BACKGROUND;
 }
-
-const FALLBACK_WORK_AREA = { x: 0, y: 0, width: 1280, height: 800 };
 
 function isUsableBounds(bounds) {
   return !!bounds
@@ -26,12 +23,6 @@ function isUsableBounds(bounds) {
     && Number.isFinite(bounds.height)
     && bounds.width > 0
     && bounds.height > 0;
-}
-
-// Displays can transiently report zero-size work areas during unplug or
-// session reconnect; a degenerate rect would collapse the window to nothing.
-function normalizeWorkArea(workArea) {
-  return isUsableBounds(workArea) ? workArea : FALLBACK_WORK_AREA;
 }
 
 function clampBoundsToWorkArea(bounds, workArea) {
@@ -49,130 +40,36 @@ function clampBoundsToWorkArea(bounds, workArea) {
   };
 }
 
-function roundedBounds(bounds) {
-  if (!isUsableBounds(bounds)) return null;
-  const normalized = {
-    x: Math.round(bounds.x),
-    y: Math.round(bounds.y),
-    width: Math.round(bounds.width),
-    height: Math.round(bounds.height),
-  };
-  return isUsableBounds(normalized) ? normalized : null;
-}
-
-function sameBounds(a, b) {
-  return !!a
-    && !!b
-    && a.x === b.x
-    && a.y === b.y
-    && a.width === b.width
-    && a.height === b.height;
-}
-
 module.exports = function initDashboard(ctx) {
   let dashboardWindow = null;
-  let saveBoundsTimer = null;
-  let lastSavedBounds = null;
   const scheduleLater = typeof ctx.setTimeout === "function" ? ctx.setTimeout : setTimeout;
-  const clearScheduled = typeof ctx.clearTimeout === "function" ? ctx.clearTimeout : clearTimeout;
-
-  function scheduleTimer(callback, delayMs) {
-    const timer = scheduleLater(callback, delayMs);
-    if (timer && typeof timer.unref === "function") timer.unref();
-    return timer;
-  }
-
-  function clearSaveBoundsTimer() {
-    if (!saveBoundsTimer) return;
-    clearScheduled(saveBoundsTimer);
-    saveBoundsTimer = null;
-  }
-
-  function getSavedDashboardBounds() {
-    if (typeof ctx.getSavedBounds !== "function") return null;
-    try { return roundedBounds(ctx.getSavedBounds()); } catch { return null; }
-  }
-
-  function getWorkAreaNear(cx, cy) {
-    if (typeof ctx.getNearestWorkArea !== "function") return FALLBACK_WORK_AREA;
-    try {
-      return normalizeWorkArea(ctx.getNearestWorkArea(cx, cy));
-    } catch {
-      return FALLBACK_WORK_AREA;
-    }
-  }
-
-  function getNormalWindowBounds(win) {
-    if (!win || (typeof win.isDestroyed === "function" && win.isDestroyed())) return null;
-    try {
-      if (typeof win.getNormalBounds === "function") {
-        const bounds = roundedBounds(win.getNormalBounds());
-        if (bounds) return bounds;
-      }
-    } catch {}
-    try {
-      return typeof win.getBounds === "function" ? roundedBounds(win.getBounds()) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function persistWindowBoundsNow(win) {
-    clearSaveBoundsTimer();
-    if (typeof ctx.onSaveBounds !== "function") return false;
-    const bounds = getNormalWindowBounds(win);
-    if (!bounds || sameBounds(bounds, lastSavedBounds)) return false;
-    try {
-      const result = ctx.onSaveBounds(bounds);
-      if (result && typeof result.then === "function") {
-        const attemptedBounds = bounds;
-        Promise.resolve(result).then(
-          (response) => {
-            if (!response || response.status !== "error") return;
-            if (sameBounds(lastSavedBounds, attemptedBounds)) lastSavedBounds = null;
-            console.warn("Clawd: failed to persist Dashboard window bounds:", response.message);
-          },
-          (err) => {
-            if (sameBounds(lastSavedBounds, attemptedBounds)) lastSavedBounds = null;
-            console.warn("Clawd: failed to persist Dashboard window bounds:", err && err.message);
-          },
-        );
-      } else if (result && result.status === "error") {
-        console.warn("Clawd: failed to persist Dashboard window bounds:", result.message);
-        return false;
-      }
-      lastSavedBounds = bounds;
-      return true;
-    } catch (err) {
-      console.warn("Clawd: failed to persist Dashboard window bounds:", err && err.message);
-      return false;
-    }
-  }
-
-  function scheduleWindowBoundsSave(win) {
-    if (typeof ctx.onSaveBounds !== "function") return;
-    clearSaveBoundsTimer();
-    saveBoundsTimer = scheduleTimer(() => {
-      saveBoundsTimer = null;
-      persistWindowBoundsNow(win);
-    }, BOUNDS_SAVE_DEBOUNCE_MS);
-  }
 
   function getCurrentSnapshot() {
-    return typeof ctx.getSessionSnapshot === "function"
+    const snapshot = typeof ctx.getSessionSnapshot === "function"
       ? ctx.getSessionSnapshot()
       : { sessions: [], groups: [], orderedIds: [], menuOrderedIds: [] };
+    return enrichSnapshot(snapshot);
   }
 
-  // textScale is per-display; `bounds` selects the display the metrics are
-  // for. Without it the host falls back to the current window, then the pet.
-  function getTextScale(bounds = null) {
-    return clampTextScale(typeof ctx.getTextScale === "function" ? ctx.getTextScale(bounds) : 1);
+  function enrichSnapshot(snapshot) {
+    return {
+      ...(snapshot || {}),
+      deepseekBalance: typeof ctx.getDeepseekBalanceSnapshot === "function"
+        ? ctx.getDeepseekBalanceSnapshot()
+        : null,
+      deepseekUsage: typeof ctx.getDeepseekUsageSnapshot === "function"
+        ? ctx.getDeepseekUsageSnapshot()
+        : null,
+    };
+  }
+
+  function getTextScale() {
+    return clampTextScale(typeof ctx.getTextScale === "function" ? ctx.getTextScale() : 1);
   }
 
   // DEFAULT_*/MIN_* are CSS px; windows are sized in DIP.
-  function getScaledMetrics(bounds = null) {
-    const scale = getTextScale(bounds);
+  function getScaledMetrics() {
+    const scale = getTextScale();
     return {
       defaultWidth: scaleWidth(DEFAULT_WIDTH, scale),
       defaultHeight: scaleHeight(DEFAULT_HEIGHT, scale),
@@ -182,23 +79,15 @@ module.exports = function initDashboard(ctx) {
   }
 
   function computeInitialBounds() {
-    const savedBounds = getSavedDashboardBounds();
-    let petBounds = null;
-    if (!savedBounds && typeof ctx.getPetWindowBounds === "function") {
-      try { petBounds = ctx.getPetWindowBounds(); } catch { petBounds = null; }
-    }
-    const anchor = savedBounds || petBounds;
-    const cx = anchor ? anchor.x + anchor.width / 2 : 0;
-    const cy = anchor ? anchor.y + anchor.height / 2 : 0;
-    const workArea = getWorkAreaNear(cx, cy);
-    const metrics = getScaledMetrics(savedBounds || workArea);
-    if (savedBounds) {
-      return clampBoundsToWorkArea({
-        ...savedBounds,
-        width: Math.max(savedBounds.width, metrics.minWidth),
-        height: Math.max(savedBounds.height, metrics.minHeight),
-      }, workArea);
-    }
+    const petBounds = typeof ctx.getPetWindowBounds === "function"
+      ? ctx.getPetWindowBounds()
+      : null;
+    const cx = petBounds ? petBounds.x + petBounds.width / 2 : 0;
+    const cy = petBounds ? petBounds.y + petBounds.height / 2 : 0;
+    const workArea = typeof ctx.getNearestWorkArea === "function"
+      ? ctx.getNearestWorkArea(cx, cy)
+      : { x: 0, y: 0, width: 1280, height: 800 };
+    const metrics = getScaledMetrics();
     const width = Math.min(metrics.defaultWidth, Math.max(metrics.minWidth, workArea.width));
     const height = Math.min(metrics.defaultHeight, Math.max(metrics.minHeight, workArea.height));
     return {
@@ -227,8 +116,10 @@ module.exports = function initDashboard(ctx) {
   function computeSettingsAnchoredBounds(settingsBounds) {
     const cx = settingsBounds.x + settingsBounds.width / 2;
     const cy = settingsBounds.y + settingsBounds.height / 2;
-    const workArea = getWorkAreaNear(cx, cy);
-    const metrics = getScaledMetrics(settingsBounds);
+    const workArea = typeof ctx.getNearestWorkArea === "function"
+      ? ctx.getNearestWorkArea(cx, cy)
+      : { x: 0, y: 0, width: 1280, height: 800 };
+    const metrics = getScaledMetrics();
     const width = Math.max(metrics.minWidth, Math.min(metrics.defaultWidth, settingsBounds.width, workArea.width));
     const height = Math.max(metrics.minHeight, Math.min(settingsBounds.height, workArea.height));
     return clampBoundsToWorkArea({
@@ -264,14 +155,8 @@ module.exports = function initDashboard(ctx) {
       dashboardWindow.setBounds(placement.bounds);
       // The anchored placement can land the window on a display with a
       // different textScale; re-zoom right away (memoized — cheap no-op when
-      // nothing changed). This can grow the window to that display's scaled
-      // minimum, so it must run before the baseline capture below.
+      // nothing changed).
       applyTextScaleToWindow();
-      // Programmatic anchoring is not user geometry: rebase the persistence
-      // baseline (and drop any pending save) so re-anchoring never overwrites
-      // the user's saved standalone position.
-      clearSaveBoundsTimer();
-      lastSavedBounds = getNormalWindowBounds(dashboardWindow) || placement.bounds;
     }
   }
 
@@ -287,7 +172,7 @@ module.exports = function initDashboard(ctx) {
   function sendSnapshot(snapshot = getCurrentSnapshot()) {
     if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
     if (!dashboardWindow.webContents || dashboardWindow.webContents.isDestroyed()) return;
-    dashboardWindow.webContents.send("dashboard:session-snapshot", snapshot);
+    dashboardWindow.webContents.send("dashboard:session-snapshot", enrichSnapshot(snapshot));
   }
 
   function sendI18n() {
@@ -299,13 +184,11 @@ module.exports = function initDashboard(ctx) {
 
   function createDashboardWindow(options = {}) {
     const placement = getDashboardPlacement(options);
-    const metrics = getScaledMetrics(placement.bounds);
+    const metrics = getScaledMetrics();
     const opts = {
       ...placement.bounds,
-      // Electron enforces the minimum over the requested size, so an uncapped
-      // minimum would undo the work-area clamp and overflow small displays.
-      minWidth: Math.min(metrics.minWidth, placement.bounds.width),
-      minHeight: Math.min(metrics.minHeight, placement.bounds.height),
+      minWidth: metrics.minWidth,
+      minHeight: metrics.minHeight,
       show: false,
       frame: true,
       transparent: false,
@@ -325,42 +208,18 @@ module.exports = function initDashboard(ctx) {
     if (ctx.iconPath) opts.icon = ctx.iconPath;
 
     dashboardWindow = new BrowserWindow(opts);
-    // BrowserWindow's constructor can quantize framed window geometry at
-    // fractional Windows DPI. Re-apply the requested outer bounds before
-    // listeners are attached, and treat the post-correction rectangle as the
-    // persistence baseline: closing an untouched window must not rewrite
-    // prefs, and native frame drift must not accumulate across reopens.
-    try {
-      const createdBounds = typeof dashboardWindow.getBounds === "function"
-        ? roundedBounds(dashboardWindow.getBounds())
-        : null;
-      if (
-        createdBounds
-        && !sameBounds(createdBounds, placement.bounds)
-        && typeof dashboardWindow.setBounds === "function"
-      ) {
-        dashboardWindow.setBounds(placement.bounds);
-      }
-    } catch {}
-    lastSavedBounds = getNormalWindowBounds(dashboardWindow) || placement.bounds;
     dashboardWindow.setMenuBarVisibility(false);
     dashboardWindow.loadFile(path.join(__dirname, "dashboard.html"));
     // textScale is per-display: re-resolve after the user drags the window
     // somewhere else (debounced — "move" fires continuously during drags).
     let moveTextScaleTimer = null;
-    const createdWindow = dashboardWindow;
     dashboardWindow.on("move", () => {
-      if (moveTextScaleTimer) clearScheduled(moveTextScaleTimer);
+      if (moveTextScaleTimer) clearTimeout(moveTextScaleTimer);
       moveTextScaleTimer = scheduleLater(() => {
         moveTextScaleTimer = null;
         applyTextScaleToWindow();
       }, 350);
-      scheduleWindowBoundsSave(createdWindow);
     });
-    dashboardWindow.on("resize", () => scheduleWindowBoundsSave(createdWindow));
-    // `closed` is too late to query native geometry. Flush while the window
-    // is still live so a pending debounce cannot lose the user's last move.
-    dashboardWindow.on("close", () => persistWindowBoundsNow(createdWindow));
     dashboardWindow.webContents.once("did-finish-load", () => {
       applyZoomToWindow(dashboardWindow, getTextScale());
       sendI18n();
@@ -374,11 +233,6 @@ module.exports = function initDashboard(ctx) {
       dashboardWindow.focus();
     });
     dashboardWindow.on("closed", () => {
-      clearSaveBoundsTimer();
-      if (moveTextScaleTimer) {
-        clearScheduled(moveTextScaleTimer);
-        moveTextScaleTimer = null;
-      }
       dashboardWindow = null;
     });
     return dashboardWindow;
@@ -396,13 +250,6 @@ module.exports = function initDashboard(ctx) {
   function showDashboard(options = {}) {
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
       if (dashboardWindow.isMinimized()) dashboardWindow.restore();
-      // A debounce still pending on an open window holds the user's own last
-      // move. The re-anchor below drops that timer and rebases the baseline,
-      // so without flushing first the placement is lost for good — the close
-      // flush cannot recover it once the baseline matches the anchor.
-      if (options.source === "settings" && saveBoundsTimer) {
-        persistWindowBoundsNow(dashboardWindow);
-      }
       applySettingsPlacement(options);
       dashboardWindow.show();
       scheduleSettingsPlacementSync(options);

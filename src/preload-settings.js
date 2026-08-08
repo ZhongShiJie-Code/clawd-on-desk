@@ -203,7 +203,7 @@ contextBridge.exposeInMainWorld("doctor", {
 //
 //   listStatuses()                 Promise<{ status, statuses: Array<state> }>
 //   status(profileId)              Promise<{ status, state }>
-//   connect(profileId)             Promise<{ status, state?, reason?, hint?, detail? }>
+//   connect(profileId)             Promise<{ status, state? }>
 //   disconnect(profileId)          Promise<{ status, state? }>
 //   deploy(profileId, options?)    Promise<{ status, message?, step? }>
 //   authenticate(profileId)        Promise<{ status, terminal?, message? }>

@@ -153,6 +153,11 @@ const {
   getSessionFocusTarget,
 } = require("./session-focus");
 const { focusCodexThreadTarget } = require("./session-focus-handoff");
+const { createClaudeDesktopPermissionBridge } = require("./claude-desktop-permission-bridge");
+const {
+  DEFAULT_CDP_PORT,
+  createClaudeDesktopPermissionDirect,
+} = require("./claude-desktop-permission-direct");
 const { isSessionInProgress } = require("./state-session-snapshot");
 const { restoreSessionsFromRecoveryLeases } = require("./session-recovery-loader");
 const { getAllAgents, getAgent } = require("../agents/registry");
@@ -1426,6 +1431,14 @@ let sendSessionHudI18n = () => {};
 let getSessionHudReservedOffset = () => 0;
 let getSessionHudWindow = () => null;
 let getQuotaRingWindow = () => null;
+// DeepSeek is deliberately kept outside the account-quota store: its balance
+// and model cache metrics come from a separate API/export pipeline.
+let _deepseekBalance = null;
+let _deepseekUsage = null;
+let _deepseekExport = null;
+const DEEPSEEK_ICON_URL = pathToFileURL(
+  path.join(__dirname, "..", "assets", "icons", "deepseek.svg")
+).href;
 const themeFadeSequencer = createThemeFadeSequencer({
   getRenderWindow: () => win,
   getHitWindow: () => hitWin,
@@ -1540,6 +1553,8 @@ const {
   isCodexPermissionInterceptEnabled: _isCodexPermissionInterceptEnabled,
   shouldSyncAgentIntegration: _shouldSyncAgentIntegration,
 } = require("./agent-gate");
+let claudeDesktopPermissionBridge = null;
+let claudeDesktopPermissionDirect = null;
 const _permCtx = {
   get win() { return win; },
   get lang() { return lang; },
@@ -1611,6 +1626,10 @@ const _permCtx = {
       requestSource: options.requestSource || "permission-bubble",
       fallbackEntry: options.fallbackEntry || getPendingPermissionFocusEntry(sessionId),
     });
+  },
+  handleClaudeDesktopPermissionDecision: (permEntry, behavior) => {
+    if (!claudeDesktopPermissionBridge) return false;
+    return claudeDesktopPermissionBridge.handleDecision(permEntry, behavior);
   },
   getSettingsSnapshot: () => _settingsController.getSnapshot(),
   subscribeShortcuts: (cb) => _settingsController.subscribeKey("shortcuts", (_value, snapshot) => {
@@ -1765,7 +1784,6 @@ const _stateCtx = {
   get hitWin() { return hitWin; },
   // Last-known account quota survives app restarts (state-account-quota.js).
   accountQuotaPersistPath: require("./state-account-quota").DEFAULT_PERSIST_PATH,
-  get claudeQuotaCollectionEnabled() { return claudeQuotaCollectionEnabled; },
   get quotaMergeSources() { return quotaMergeSources; },
   get doNotDisturb() { return doNotDisturb; },
   set doNotDisturb(v) { doNotDisturb = v; },
@@ -1872,6 +1890,15 @@ const _stateCtx = {
   },
 };
 const _state = require("./state")(_stateCtx);
+const codexOfficialQuota = require("./codex-official-quota")({
+  onQuota: (codexQuota) => {
+    try {
+      _state.updateAccountQuota(null, { codexQuota });
+    } catch (err) {
+      console.warn("Clawd: official Codex quota update failed:", err && err.message);
+    }
+  },
+});
 const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride,
         enableDoNotDisturb, disableDoNotDisturb, startStaleCleanup, stopStaleCleanup,
         startWakePoll, stopWakePoll, detectRunningAgentProcesses,
@@ -2008,6 +2035,7 @@ const {
   initFocusHelper,
   killFocusHelper,
   focusTerminalWindow,
+  focusClaudeDesktopWindow,
   captureGhosttyTerminalId,
   clearMacFocusCooldownTimer,
 } = _focus;
@@ -2063,6 +2091,15 @@ function focusDashboardSession(sessionId, options = {}) {
     return true;
   }
 
+  if (focusTarget.type === "claude-desktop") {
+    const result = focusClaudeDesktopWindow({
+      requestSource,
+      sessionId: id,
+    });
+    focusLog(`focus result branch=claude-desktop reason=${result && result.reason ? result.reason : "submitted"} source=${requestSource} sid=${id}`);
+    return result && result.submitted === true;
+  }
+
   if (focusTarget.type === "terminal") {
     return focusTerminalSession(focusEntry, id, requestSource);
   }
@@ -2094,22 +2131,45 @@ const _dashboard = require("./dashboard")({
   get lang() { return lang; },
   t: (key) => translate(key),
   getSessionSnapshot: () => _state.buildSessionSnapshot(),
+  getDeepseekBalanceSnapshot: () => _deepseekBalance && _deepseekBalance.getSnapshot(),
+  getDeepseekUsageSnapshot: () => _deepseekUsage && _deepseekUsage.getSnapshot(),
   getI18n: () => getDashboardI18nPayload(),
   getPetWindowBounds,
   getNearestWorkArea,
   getSettingsWindow: () => settingsWindowRuntime.getWindow(),
-  getTextScale: (bounds) => effectiveTextScaleForKey(
-    getDisplayKeyForBounds(bounds)
-    || getWindowDisplayKey(_dashboard ? _dashboard.getWindow() : null)
-    || getPetDisplayKey()
+  getTextScale: () => effectiveTextScaleForKey(
+    getWindowDisplayKey(_dashboard ? _dashboard.getWindow() : null) || getPetDisplayKey()
   ),
-  getSavedBounds: () => _settingsController.get("dashboardWindowBounds"),
-  onSaveBounds: (bounds) => _settingsController.applyUpdate("dashboardWindowBounds", bounds),
   iconPath: settingsWindowRuntime.getIconPath(),
 });
 showDashboard = _dashboard.showDashboard;
 broadcastDashboardSessionSnapshot = _dashboard.broadcastSessionSnapshot;
 sendDashboardI18n = _dashboard.sendI18n;
+
+_deepseekBalance = require("./deepseek-balance")({
+  onChange: () => {
+    try { broadcastDashboardSessionSnapshot(_state.buildSessionSnapshot()); } catch {}
+    try { broadcastSessionHudSnapshot(_state.buildSessionSnapshot()); } catch {}
+  },
+});
+
+_deepseekUsage = require("./deepseek-usage")({
+  onChange: () => {
+    try { broadcastDashboardSessionSnapshot(_state.buildSessionSnapshot()); } catch {}
+    try { broadcastSessionHudSnapshot(_state.buildSessionSnapshot()); } catch {}
+  },
+});
+
+_deepseekExport = require("./deepseek-export")({
+  // The user's DeepSeek login is in the normal Chrome "Jie" profile, not
+  // Hermes's dedicated browser profile.
+  chromeProfileName: "Profile 1",
+  onExported: () => {
+    void _deepseekUsage.refresh().catch(() => {});
+    try { broadcastDashboardSessionSnapshot(_state.buildSessionSnapshot()); } catch {}
+    try { broadcastSessionHudSnapshot(_state.buildSessionSnapshot()); } catch {}
+  },
+});
 
 // ── First-run onboarding tutorial ──
 // Buckets the installable agents for the tutorial's step 2. We call the
@@ -2234,6 +2294,9 @@ const _sessionHud = require("./session-hud")({
   getMiniMode: () => _mini.getMiniMode(),
   getMiniTransitioning: () => _mini.getMiniTransitioning(),
   getSessionSnapshot: () => _state.buildSessionSnapshot(),
+  getDeepseekBalanceSnapshot: () => _deepseekBalance && _deepseekBalance.getSnapshot(),
+  getDeepseekUsageSnapshot: () => _deepseekUsage && _deepseekUsage.getSnapshot(),
+  getDeepseekIconUrl: () => DEEPSEEK_ICON_URL,
   getI18n: () => getDashboardI18nPayload(),
   getPetWindowBounds,
   getHitRectScreen,
@@ -2272,6 +2335,7 @@ const _serverCtx = {
   get manageClaudeHooksAutomatically() { return manageClaudeHooksAutomatically; },
   get autoStartWithClaude() { return autoStartWithClaude; },
   get claudeQuotaCollectionEnabled() { return claudeQuotaCollectionEnabled; },
+  handleDeepseekCacheHitPost: (req, res) => _deepseekUsage.handleCacheHitPost(req, res),
   get doNotDisturb() { return doNotDisturb; },
   shouldDropForDnd: () => _state.shouldDropForDnd ? _state.shouldDropForDnd() : doNotDisturb,
   get hideBubbles() { return getAllBubblesHidden(); },
@@ -2311,8 +2375,6 @@ const _serverCtx = {
   setState,
   updateSession: agentRuntime.updateSessionFromServer,
   updateSessionMetadata: (sessionId, opts) => _state.updateSessionMetadata(sessionId, opts),
-  clearClaudeStatuslineAuthority: (profileId) => _state.clearClaudeStatuslineAuthority(profileId),
-  clearLocalClaudeQuota: () => _state.clearLocalClaudeQuota(),
   updateAccountQuota: (host, quotas) => _state.updateAccountQuota(host, quotas),
   resolvePermissionEntry,
   sendPermissionResponse,
@@ -2357,6 +2419,33 @@ function sessionLog(msg) {
   const { rotatedAppend } = require("./log-rotate");
   rotatedAppend(sessionDebugLog, `[${formatLocalTimestamp()}] ${msg}\n`);
 }
+
+claudeDesktopPermissionDirect = createClaudeDesktopPermissionDirect({
+  port: process.env.CLAWD_CLAUDE_CDP_PORT || DEFAULT_CDP_PORT,
+  debugLog: (message) => sessionLog(message),
+});
+claudeDesktopPermissionBridge = createClaudeDesktopPermissionBridge({
+  permission: _perm,
+  getSessions: () => sessions,
+  debugLog: (message) => sessionLog(message),
+  direct: claudeDesktopPermissionDirect,
+  directMode: process.env.CLAWD_CLAUDE_DIRECT_PERMISSION === "1",
+  // Claude Desktop's native permission card remains the sole authority. The
+  // HUD mirrors it as a reminder and only offers a focus/open action.
+  reminderOnly: true,
+  focusClaude: (sessionId) => {
+    const focused = focusDashboardSession(sessionId, {
+      requestSource: "claude-desktop-permission",
+    });
+    if (!focused) {
+      focusClaudeDesktopWindow({
+        requestSource: "claude-desktop-permission-fallback",
+        sessionId,
+      });
+    }
+    return focused;
+  },
+});
 
 ipcMain.on("sound-playback-error", (_event, payload) => {
   const phase = payload && typeof payload.phase === "string"
@@ -4107,6 +4196,9 @@ function createWindow() {
 
   initFocusHelper();
   startMainTick();
+  _deepseekBalance.start();
+  _deepseekUsage.start();
+  _deepseekExport.start();
   // Silently connect any remote SSH profile flagged "connect on launch" once
   // the hook server is ACTUALLY listening and its real port is known.
   // runtime.connect() reads getHookServerPort() synchronously to build the SSH
@@ -4558,6 +4650,7 @@ if (!gotTheLock) {
     catch (err) { console.warn("Clawd: discord presence startup failed:", err && err.message); }
     queueFeishuApprovalSync("startup");
     createWindow();
+    claudeDesktopPermissionBridge.start();
     void telegramMigrationInit.then((controller) => {
       if (!controller || !telegramMigrationNudge) return;
       return telegramMigrationNudge.sync({ allowNotify: true });
@@ -4637,6 +4730,9 @@ if (!gotTheLock) {
     // agent-gate snapshot — a user who disabled Codex at last shutdown
     // shouldn't see its file watcher spin up on the next launch.
     agentRuntime.startCodexLogMonitor();
+    // Codex token_count events are only emitted while a turn is active. Keep
+    // the account-wide quota current between turns from the official usage API.
+    codexOfficialQuota.start();
 
     // Auto-install VS Code/Cursor terminal-focus extension
     try { installTerminalFocusExtension(); } catch (err) {
@@ -4678,14 +4774,19 @@ if (!gotTheLock) {
     }
     if (discordPresenceBridge) discordPresenceBridge.stop();
     stopFeishuApprovalClient();
+    if (claudeDesktopPermissionBridge) claudeDesktopPermissionBridge.stop();
     _perm.cleanup();
     _server.cleanup();
     if (_lanWss) _lanWss.cleanup();
     _updateBubble.cleanup();
     _state.cleanup();
+    codexOfficialQuota.cleanup();
     _tick.cleanup();
     _mini.cleanup();
     if (macHideController) macHideController.stop();
+    if (_deepseekExport) _deepseekExport.cleanup();
+    if (_deepseekUsage) _deepseekUsage.cleanup();
+    if (_deepseekBalance) _deepseekBalance.cleanup();
     _sessionHud.cleanup();
     agentRuntime.cleanup();
     topmostRuntime.cleanup();

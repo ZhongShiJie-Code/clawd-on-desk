@@ -6,6 +6,7 @@ const SESSION_STALE_MS = 600000;
 const WORKING_STALE_MS = 300000;
 const DETACHED_IDLE_STALE_MS = 30000;
 const CODEX_LOCAL_WORKING_STALE_FLOOR_MS = 20 * 60 * 1000;
+const CLAUDE_DESKTOP_PROCESS_EXIT_GRACE_MS = 15000;
 
 function isWorkingLikeState(state) {
   return state === "working" || state === "juggling" || state === "thinking";
@@ -33,6 +34,20 @@ function isLocalZcodeDesktopIdleSession(session) {
     && !session.host
     && !session.headless
     && session.state === "idle";
+}
+
+function isClaudeDesktopWorkingLikeSession(session) {
+  if (!session
+    || session.agentId !== "claude-code"
+    || session.host
+    || session.headless
+    || !isWorkingLikeState(session.state)) {
+    return false;
+  }
+  const cwd = typeof session.cwd === "string"
+    ? session.cwd.replace(/\\/g, "/").replace(/\/+$/, "")
+    : "";
+  return /\/Claude-3p\/local-agent-mode-sessions\/[^/]+\/[^/]+\/local_[^/]+\/outputs$/.test(cwd);
 }
 
 function getStaleSessionDecision(session, options = {}) {
@@ -76,6 +91,20 @@ function getStaleSessionDecision(session, options = {}) {
     Number(session.ackedAt) || 0
   );
   const age = now - referenceTs;
+
+  // Claude Desktop's local hook process does not provide a terminal PID, so a
+  // missed Stop hook otherwise leaves the HUD in thinking for the generic
+  // five-minute working timeout. Reconcile only the exact Desktop workspace
+  // shape and only through an injected process probe; this does not affect
+  // session identity, display mapping, or duplicate filtering.
+  if (isClaudeDesktopWorkingLikeSession(session)
+    && typeof options.isClaudeDesktopProcessAlive === "function") {
+    const desktopProcessAlive = options.isClaudeDesktopProcessAlive(session.cwd);
+    if (desktopProcessAlive === true) return { action: null };
+    if (desktopProcessAlive === false && age > CLAUDE_DESKTOP_PROCESS_EXIT_GRACE_MS) {
+      return { action: "idle", reason: "claude-desktop-process-exit", updateTimestamp: true };
+    }
+  }
 
   // Codex Desktop threads share one long-lived app-server PID and do not emit
   // SessionEnd. A live process therefore cannot keep an individual idle thread
@@ -154,8 +183,10 @@ module.exports = {
   WORKING_STALE_MS,
   DETACHED_IDLE_STALE_MS,
   CODEX_LOCAL_WORKING_STALE_FLOOR_MS,
+  CLAUDE_DESKTOP_PROCESS_EXIT_GRACE_MS,
   isWorkingLikeState,
   isLocalCodexWorkingLikeSession,
+  isClaudeDesktopWorkingLikeSession,
   isLocalZcodeDesktopIdleSession,
   getStaleSessionDecision,
 };

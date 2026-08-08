@@ -324,9 +324,25 @@ module.exports = function initSessionHud(ctx) {
   let visibleHoldUntil = 0;
 
   function getCurrentSnapshot() {
-    return typeof ctx.getSessionSnapshot === "function"
+    const snapshot = typeof ctx.getSessionSnapshot === "function"
       ? ctx.getSessionSnapshot()
       : { sessions: [], groups: [], orderedIds: [], menuOrderedIds: [] };
+    return enrichSnapshot(snapshot);
+  }
+
+  function enrichSnapshot(snapshot) {
+    return {
+      ...(snapshot || {}),
+      deepseekBalance: typeof ctx.getDeepseekBalanceSnapshot === "function"
+        ? ctx.getDeepseekBalanceSnapshot()
+        : null,
+      deepseekUsage: typeof ctx.getDeepseekUsageSnapshot === "function"
+        ? ctx.getDeepseekUsageSnapshot()
+        : null,
+      deepseekIconUrl: typeof ctx.getDeepseekIconUrl === "function"
+        ? ctx.getDeepseekIconUrl()
+        : null,
+    };
   }
 
   function getMiniMode() {
@@ -425,6 +441,7 @@ module.exports = function initSessionHud(ctx) {
         anchorRect,
         workArea,
         coinCount,
+        hasDeepseek: ringGeom.hasDeepseekSummary(snapshot),
         scale,
         avoidRects: collectRingAvoidRects(contentBounds),
       })
@@ -643,6 +660,9 @@ module.exports = function initSessionHud(ctx) {
     ringWindow.webContents.send("quota-ring:snapshot", {
       accountQuota: Array.isArray(snapshot.accountQuota) ? snapshot.accountQuota : [],
       quotaAgentIcons: snapshot.quotaAgentIcons || {},
+      deepseekBalance: snapshot.deepseekBalance || null,
+      deepseekUsage: snapshot.deepseekUsage || null,
+      deepseekIconUrl: snapshot.deepseekIconUrl || null,
       side,
     });
   }
@@ -737,6 +757,7 @@ module.exports = function initSessionHud(ctx) {
       anchorRect,
       workArea,
       coinCount,
+      hasDeepseek: ringGeom.hasDeepseekSummary(snapshot),
       scale,
       avoidRects,
     });
@@ -874,6 +895,7 @@ module.exports = function initSessionHud(ctx) {
   }
 
   function syncSessionHud(snapshot = latestSnapshot || getCurrentSnapshot(), options = {}) {
+    snapshot = enrichSnapshot(snapshot);
     latestSnapshot = snapshot;
     // Defend against stale reveal: if base eligibility dropped (last session
     // ended AND quota went away), clear any leftover clickRevealed so a future
@@ -911,7 +933,7 @@ module.exports = function initSessionHud(ctx) {
   }
 
   function broadcastSessionSnapshot(snapshot) {
-    syncSessionHud(snapshot);
+    syncSessionHud(enrichSnapshot(snapshot));
   }
 
   function repositionSessionHud() {

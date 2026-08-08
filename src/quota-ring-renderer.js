@@ -53,13 +53,20 @@ const INNER_R = 6.8;
 const INNER_SW = 2.6;
 const OUTER_C = 2 * Math.PI * OUTER_R;
 const INNER_C = 2 * Math.PI * INNER_R;
-// Provider logos are square PNGs with their own padding. Clip them to a circle
-// (avatar mask) and oversize past the clip so the mark fills the circle instead
-// of floating small inside the PNG's whitespace.
-const GLYPH_ZOOM = 1.35;
+// Keep provider logos inside the avatar plate. Oversizing plus `slice` cropped
+// the Claude/Codex PNGs and made the DeepSeek SVG look incomplete.
+const GLYPH_ZOOM = 1.0;
 let coinClipSeq = 0;
 
-let payload = { accountQuota: [], quotaAgentIcons: {}, side: "left", translations: {} };
+let payload = {
+  accountQuota: [],
+  quotaAgentIcons: {},
+  deepseekBalance: null,
+  deepseekUsage: null,
+  deepseekIconUrl: null,
+  side: "left",
+  translations: {},
+};
 const clusterEl = document.getElementById("cluster");
 
 function t(key) {
@@ -81,6 +88,27 @@ function severityClass(usedPercent) {
   if (p > 85) return "sev-hot";
   if (p >= 60) return "sev-warn";
   return "sev-ok";
+}
+
+function cacheSeverityClass(hitPercent) {
+  const p = Number(hitPercent);
+  if (!Number.isFinite(p)) return "sev-warn";
+  return p >= 95 ? "sev-ok" : "sev-hot";
+}
+
+function formatDeepseekBalance(balance) {
+  const entries = balance && balance.status === "ok" && Array.isArray(balance.entries)
+    ? balance.entries
+    : [];
+  const entry = entries.find((candidate) => Number.isFinite(Number(candidate && candidate.total)));
+  if (!entry) return null;
+  const amount = Number(entry.total);
+  const currency = String(entry.currency || "").toUpperCase();
+  const cny = currency === "USD" ? amount * 7.2 : amount;
+  return {
+    text: `¥${cny.toFixed(2)}`,
+    low: cny <= 5,
+  };
 }
 
 function formatDurationHM(totalMinutes) {
@@ -210,6 +238,50 @@ function buildCoinModel(source, def, now, multiSource) {
   };
 }
 
+function buildDeepseekCoinModel() {
+  const usage = payload.deepseekUsage;
+  const models = usage && Array.isArray(usage.models) ? usage.models : [];
+  const byModel = new Map(models.map((entry) => [entry && entry.model, entry]));
+  const flash = byModel.get("deepseek-v4-flash");
+  const pro = byModel.get("deepseek-v4-pro");
+  const makeWindow = (entry, ring, shortLabel, fullLabel) => {
+    const rate = Number(entry && entry.cacheHitRate);
+    if (!Number.isFinite(rate)) return null;
+    return {
+      pct: Math.max(0, Math.min(100, Math.round(rate * 100))),
+      cachePct: Math.max(0, Math.min(100, rate * 100)),
+      label: shortLabel,
+      // DeepSeek has no hover tooltip; keep this label as a diagnostic
+      // fallback for the shared coin model without adding locale-only UI.
+      detailLabel: fullLabel,
+      reset: false,
+      resetAt: null,
+      ring,
+      field: entry.model,
+      stale: false,
+      seenAt: Number(usage && usage.updatedAt) || null,
+    };
+  };
+  const windows = [
+    makeWindow(flash, "outer", "V4F", "V4 Flash"),
+    makeWindow(pro, "inner", "V4P", "V4 Pro"),
+  ].filter(Boolean);
+  const balance = formatDeepseekBalance(payload.deepseekBalance);
+  if (!windows.length && !balance) return null;
+  return {
+    kind: "deepseek",
+    providerKey: "deepseek",
+    label: "DeepSeek",
+    glyphUrl: payload.deepseekIconUrl,
+    windows,
+    displayWindow: windows[0] || null,
+    balance,
+    state: "live",
+    binding: windows[0] || null,
+    near: false,
+  };
+}
+
 function collectCoins(now) {
   const sources = Array.isArray(payload.accountQuota) ? payload.accountQuota : [];
   const drawableSources = sources.filter((source) =>
@@ -217,6 +289,8 @@ function collectCoins(now) {
       && RING_PROVIDERS.some((def) => providerHasDrawableQuota(source, def)));
   const multiSource = drawableSources.length > 1;
   const coins = [];
+  const deepseek = buildDeepseekCoinModel();
+  if (deepseek) coins.push(deepseek);
   for (const source of drawableSources) {
     for (const def of RING_PROVIDERS) {
       const model = buildCoinModel(source, def, now, multiSource);
@@ -257,14 +331,20 @@ function buildCoinSvg(model) {
   svg.appendChild(ringCircle("track", OUTER_R, OUTER_SW, null));
   if (outer && !outer.reset) {
     const outerNear = model.near && model.binding === outer;
-    const f = ringCircle(`fill ${severityClass(outer.pct)}${outerNear ? " is-near" : ""}`, OUTER_R, OUTER_SW, { pct: outer.pct });
+    const severity = model.kind === "deepseek"
+      ? cacheSeverityClass(outer.cachePct ?? outer.pct)
+      : severityClass(outer.pct);
+    const f = ringCircle(`fill ${severity}${outerNear ? " is-near" : ""}`, OUTER_R, OUTER_SW, { pct: outer.pct });
     svg.appendChild(f);
   }
   if (dual) {
     svg.appendChild(ringCircle("track", INNER_R, INNER_SW, null));
     if (inner && !inner.reset) {
       const innerNear = model.near && model.binding === inner;
-      svg.appendChild(ringCircle(`fill ${severityClass(inner.pct)}${innerNear ? " is-near" : ""}`, INNER_R, INNER_SW, { pct: inner.pct }));
+      const severity = model.kind === "deepseek"
+        ? cacheSeverityClass(inner.cachePct ?? inner.pct)
+        : severityClass(inner.pct);
+      svg.appendChild(ringCircle(`fill ${severity}${innerNear ? " is-near" : ""}`, INNER_R, INNER_SW, { pct: inner.pct }));
     }
   }
 
@@ -292,14 +372,14 @@ function buildCoinSvg(model) {
     defs.appendChild(clip);
     svg.appendChild(defs);
 
-    const box = plateR * 2 * GLYPH_ZOOM; // oversize past the clip → crops PNG padding
+    const box = plateR * 2 * GLYPH_ZOOM;
     const img = document.createElementNS(SVG_NS, "image");
     img.setAttribute("class", "glyph");
     img.setAttribute("x", String(CX - box / 2));
     img.setAttribute("y", String(CY - box / 2));
     img.setAttribute("width", String(box));
     img.setAttribute("height", String(box));
-    img.setAttribute("preserveAspectRatio", "xMidYMid slice");
+    img.setAttribute("preserveAspectRatio", "xMidYMid meet");
     img.setAttribute("clip-path", `url(#${clipId})`);
     img.setAttribute("href", model.glyphUrl);
     img.setAttributeNS(XLINK_NS, "xlink:href", model.glyphUrl);
@@ -328,7 +408,26 @@ function coinTooltip(model, now) {
   return parts.join(" · ");
 }
 
+function buildDeepseekCoinRow(model) {
+  const row = document.createElement("div");
+  row.className = "coin-row deepseek-coin-row is-live";
+  row.setAttribute("aria-label", "DeepSeek balance and cache hit rates");
+  row.addEventListener("click", () => window.quotaRingAPI.openDashboard());
+
+  const readout = document.createElement("div");
+  readout.className = "readout deepseek-readout";
+  const balance = document.createElement("span");
+  balance.className = `balance ${model.balance && model.balance.low ? "balance-low" : "balance-ok"}`;
+  balance.textContent = model.balance ? `${model.balance.text} 余额` : "余额 --";
+  // The two cache rates are already encoded by the concentric rings. Keeping
+  // the readout to the balance avoids repeating the same values beside them.
+  readout.append(balance);
+  row.append(readout, buildCoinSvg(model));
+  return row;
+}
+
 function buildCoinRow(model, now) {
+  if (model.kind === "deepseek") return buildDeepseekCoinRow(model);
   const row = document.createElement("div");
   row.className = `coin-row is-${model.state}`;
   row.title = coinTooltip(model, now);
@@ -390,7 +489,8 @@ function fingerprint(now) {
         : 0;
       return `${w.ring}:${w.field}:${w.pct}:${w.reset ? 1 : 0}:${resetIn}:${w.stale ? 1 : 0}:${staleAge}`;
     }).join(",");
-    return `${m.providerKey}:${m.host || ""}:${m.state}:${windows}`;
+    const balance = m.kind === "deepseek" && m.balance ? `${m.balance.text}:${m.balance.low ? 1 : 0}` : "";
+    return `${m.kind || "quota"}:${m.providerKey}:${m.host || ""}:${m.state}:${balance}:${windows}`;
   }).join("|");
 }
 
@@ -424,6 +524,9 @@ async function init() {
     payload = {
       accountQuota: Array.isArray(next && next.accountQuota) ? next.accountQuota : [],
       quotaAgentIcons: (next && next.quotaAgentIcons) || {},
+      deepseekBalance: (next && next.deepseekBalance) || null,
+      deepseekUsage: (next && next.deepseekUsage) || null,
+      deepseekIconUrl: (next && next.deepseekIconUrl) || null,
       side: next && next.side === "right" ? "right" : "left",
       translations: payload.translations,
       lang: payload.lang,

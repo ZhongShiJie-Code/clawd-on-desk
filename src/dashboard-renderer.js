@@ -82,6 +82,7 @@ const QUOTA_WARNING_THRESHOLD = 90;
 // A source that has not confirmed its numbers recently gets an explicit
 // "as of N ago" label instead of presenting old numbers as live.
 const QUOTA_STALE_AFTER_MS = 5 * 60 * 1000;
+const DEEPSEEK_CNY_EXCHANGE_RATE = 7.2;
 
 function formatDurationHM(totalMinutes) {
   const hours = Math.floor(totalMinutes / 60);
@@ -253,6 +254,98 @@ function buildQuotaSection(headerKey, rows) {
   return section;
 }
 
+function formatDeepseekCny(amount, currency) {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return "--";
+  const normalized = String(currency || "").trim().toUpperCase();
+  const cny = normalized === "USD" ? value * DEEPSEEK_CNY_EXCHANGE_RATE : value;
+  return `¥${cny.toFixed(2)}`;
+}
+
+function formatDeepseekPercent(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(Math.max(0, Math.min(1, number)) * 100)}%` : "--";
+}
+
+function formatDeepseekUpdatedAt(value) {
+  const time = Number(value);
+  if (!Number.isFinite(time) || time <= 0) return "";
+  try {
+    return new Intl.DateTimeFormat(i18nPayload.lang || "zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(time);
+  } catch (_err) {
+    return "";
+  }
+}
+
+function buildDeepseekSection(snapshot) {
+  const balance = snapshot && snapshot.deepseekBalance;
+  const usage = snapshot && snapshot.deepseekUsage;
+  const models = usage && Array.isArray(usage.models)
+    ? usage.models.filter((entry) => entry && entry.model)
+    : [];
+  const balanceEntries = balance && balance.status === "ok" && Array.isArray(balance.entries)
+    ? balance.entries
+    : [];
+  if (!models.length && !balanceEntries.length) return null;
+
+  const section = document.createElement("div");
+  section.className = "quota-section deepseek-section";
+  section.appendChild(createText("div", "quota-section-header", "DeepSeek"));
+
+  const summary = document.createElement("div");
+  summary.className = "deepseek-summary-row";
+  const balanceText = balanceEntries.length
+    ? balanceEntries.map((entry) => formatDeepseekCny(entry.total, entry.currency)).join(" · ")
+    : "--";
+  const balanceLow = balanceEntries.some((entry) => {
+    const amount = Number(entry.total);
+    const currency = String(entry.currency || "").trim().toUpperCase();
+    return (currency === "USD" ? amount * DEEPSEEK_CNY_EXCHANGE_RATE : amount) <= 5;
+  });
+  summary.appendChild(createText("span", "deepseek-balance-label", "余额"));
+  summary.appendChild(createText("strong", `deepseek-balance-value${balanceLow ? " balance-low" : ""}`, balanceText));
+  const updated = formatDeepseekUpdatedAt(usage && usage.updatedAt);
+  if (updated) summary.appendChild(createText("span", "deepseek-updated", `同步 ${updated}`));
+  section.appendChild(summary);
+
+  for (const entry of models) {
+    const row = document.createElement("div");
+    row.className = "deepseek-model-row";
+    const header = document.createElement("div");
+    header.className = "deepseek-model-header";
+    header.appendChild(createText("span", "deepseek-model-name", entry.label || entry.model));
+    const metrics = document.createElement("span");
+    metrics.className = "deepseek-model-metrics";
+    const cost = Number(entry.cost) > 0 ? `消耗 ${formatDeepseekCny(entry.cost, entry.currency)}` : "";
+    const hasUsageData = entry.hasData === true
+      || Number(entry.calls) > 0
+      || Number(entry.inputTokens) > 0
+      || Number(entry.outputTokens) > 0
+      || Number(entry.cacheReadTokens) > 0;
+    const source = entry.official ? "官方" : (hasUsageData ? "实时估算" : "");
+    const metricParts = [`缓存命中率 ${formatDeepseekPercent(entry.cacheHitRate)}`];
+    if (cost) metricParts.push(cost);
+    if (source) metricParts.push(source);
+    metrics.textContent = metricParts.join(" · ");
+    header.appendChild(metrics);
+    row.appendChild(header);
+
+    const details = [
+      Number(entry.cacheReadTokens) > 0 ? `缓存命中 ${formatTokenCount(entry.cacheReadTokens)}` : "",
+      Number(entry.inputTokens) > 0 ? `未命中 ${formatTokenCount(entry.inputTokens)}` : "",
+      Number(entry.outputTokens) > 0 ? `输出 ${formatTokenCount(entry.outputTokens)}` : "",
+      Number(entry.calls) > 0 ? `调用 ${formatTokenCount(entry.calls)}` : "",
+    ].filter(Boolean).join(" · ");
+    if (details) row.appendChild(createText("div", "deepseek-model-details", details));
+    section.appendChild(row);
+  }
+  return section;
+}
+
 // render() re-invokes renderQuotaSummary every second so the "resets in Xh
 // Ym" countdowns stay live even between real quota updates, but that only
 // needs to touch the DOM once a minute (formatResetIn's granularity) or when
@@ -274,7 +367,13 @@ function renderQuotaSummary(snapshot) {
   if (!quotaSummaryEl) return;
   const accountQuota = Array.isArray(snapshot && snapshot.accountQuota) ? snapshot.accountQuota : [];
 
-  const signature = computeQuotaSummarySignature(accountQuota);
+  // DeepSeek is independent of accountQuota, so include its live snapshots in
+  // the memoization key or balance/cache updates would remain invisible until
+  // a native quota changed.
+  const signature = `${computeQuotaSummarySignature(accountQuota)}|${JSON.stringify({
+    deepseekBalance: snapshot && snapshot.deepseekBalance,
+    deepseekUsage: snapshot && snapshot.deepseekUsage,
+  })}`;
   if (signature === lastQuotaSummarySignature) return;
   lastQuotaSummarySignature = signature;
 
@@ -282,6 +381,9 @@ function renderQuotaSummary(snapshot) {
   const sources = accountQuota.map((entry) => ({ ...entry, multiSource }));
 
   const sections = [];
+
+  const deepseekSection = buildDeepseekSection(snapshot);
+  if (deepseekSection) sections.push(deepseekSection);
 
   const antigravityRows = [];
   for (const source of sources) {
@@ -670,6 +772,8 @@ function createCard(session, now) {
   const focusTargetType = session.focusTarget && session.focusTarget.type;
   button.textContent = focusTargetType === "codex-thread"
     ? t("dashboardOpenCodexSession")
+    : focusTargetType === "claude-desktop"
+      ? t("dashboardOpenClaudeDesktop")
     : t("dashboardJumpTerminal");
   button.disabled = session.canFocus !== true;
   if (button.disabled) {

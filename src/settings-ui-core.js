@@ -50,7 +50,7 @@
   // Runtime-only geometry belongs in the snapshot for consistency, but has no
   // mounted Settings control. Re-rendering for it would destroy focused inputs
   // and reset the active tab's scroll position after every window move/resize.
-  const RENDERER_INERT_SETTINGS_KEYS = new Set(["settingsWindowBounds", "dashboardWindowBounds"]);
+  const RENDERER_INERT_SETTINGS_KEYS = new Set(["settingsWindowBounds"]);
 
   const state = {
     snapshot: null,

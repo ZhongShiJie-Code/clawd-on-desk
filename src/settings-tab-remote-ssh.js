@@ -158,40 +158,6 @@
     });
   }
 
-  function hasDeploymentStamp(profile) {
-    return Number.isFinite(profile && profile.lastDeployedAt) && profile.lastDeployedAt > 0;
-  }
-
-  function requestProfileConnect(profile) {
-    if (!hasDeploymentStamp(profile)) {
-      view.selectedProfileId = profile.id;
-      ops.showToast(t("remoteSshErrDeploymentRequired"), { error: true });
-      ops.requestRender({ content: true });
-      return;
-    }
-    if (!window.remoteSsh || typeof window.remoteSsh.connect !== "function") return;
-    Promise.resolve(window.remoteSsh.connect(profile.id)).then((result) => {
-      if (!result || result.status === "ok") return;
-      if (result.reason === "deployment_required") {
-        view.runtimeStatuses.set(profile.id, {
-          profileId: profile.id,
-          status: "failed",
-          message: result.message || null,
-          hint: result.hint || "remoteSshErrDeploymentRequired",
-          lastErrorReason: result.reason,
-        });
-        view.selectedProfileId = profile.id;
-        const hintText = t(result.hint || "remoteSshErrDeploymentRequired");
-        ops.showToast(hintText, { error: true });
-        ops.requestRender({ content: true });
-        return;
-      }
-      ops.showToast(result.message || t("remoteSshStatus_failed"), { error: true });
-    }).catch((err) => {
-      ops.showToast((err && err.message) || t("remoteSshStatus_failed"), { error: true });
-    });
-  }
-
   // ── Render ──
 
   function render(parent) {
@@ -299,10 +265,11 @@
     actions.className = "remote-ssh-card-actions";
     actions.appendChild(badge);
 
-    // Surface "hooks never deployed" and keep Connect disabled. Connect never
-    // performs deployment, so an edited target must go through the explicit
-    // Deploy / Repair Hooks flow before it can create a tunnel.
-    if (!hasDeploymentStamp(profile)) {
+    // Surface "hooks never deployed" before the user clicks Connect — Connect
+    // alone only builds the reverse tunnel, it does not push hook files. A
+    // tunnel with no hooks shows green "connected" but the desktop pet
+    // never reacts because remote codex/claude has no hook config.
+    if (!Number.isFinite(profile.lastDeployedAt)) {
       const warn = document.createElement("span");
       warn.className = "remote-ssh-deploy-warn";
       warn.textContent = "⚠";
@@ -320,11 +287,9 @@
       });
     } else {
       connectBtn.textContent = t("remoteSshConnect");
-      connectBtn.disabled = !hasDeploymentStamp(profile);
-      if (connectBtn.disabled) connectBtn.title = t("remoteSshErrDeploymentRequired");
       connectBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        requestProfileConnect(profile);
+        if (window.remoteSsh) window.remoteSsh.connect(profile.id);
       });
     }
     actions.appendChild(connectBtn);

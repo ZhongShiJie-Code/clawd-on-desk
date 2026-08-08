@@ -65,8 +65,10 @@ const BUBBLE_STRINGS = {
     alwaysAllow: "Always allow",
     sessionTrust: "Don’t ask again in this session",
     permissionRequest: "Permission Request",
+    claudeDesktopPermission: "Claude Desktop Permission",
     agent: "Agent",
     allow: "Allow",
+    allowOnce: "Allow Once",
     deny: "Deny",
     alwaysAllowBlanket: "Always Allow (blanket)",
     alwaysAllowBlanketTitle: "Warning: {agent}'s 'always' rule auto-approves every subsequent tool call of the same category in this session (including rm and similar destructive commands). The rule lives only in memory — restart {agent} to revoke.",
@@ -86,6 +88,7 @@ const BUBBLE_STRINGS = {
     kimiPermission: "Kimi Permission",
     checkKimiTerminal: "Approve or reject this request in the Kimi terminal.",
     gotIt: "Got it",
+    openClaudeDesktop: "Open Claude Desktop",
     codexNeedsInput: "Codex Needs Input",
     goToCodex: "Go to Codex",
     answerInCodex: "Choose or type your answer in Codex.",
@@ -108,8 +111,10 @@ const BUBBLE_STRINGS = {
     alwaysAllow: "\u59CB\u7EC8\u5141\u8BB8",
     sessionTrust: "\u672C\u4F1A\u8BDD\u4E0D\u518D\u8BE2\u95EE",
     permissionRequest: "\u6743\u9650\u8BF7\u6C42",
+    claudeDesktopPermission: "Claude Desktop \u6743\u9650",
     agent: "\u52A9\u624B",
     allow: "\u6279\u51C6",
+    allowOnce: "\u5141\u8BB8\u4E00\u6B21",
     deny: "\u62D2\u7EDD",
     alwaysAllowBlanket: "\u59CB\u7EC8\u5141\u8BB8\uFF08\u901A\u914D\uFF09",
     alwaysAllowBlanketTitle: "\u8B66\u544A\uFF1A{agent} \u7684 always \u89C4\u5219\u4F1A\u8BA9\u672C\u6B21 session \u5185\u4E0B\u4E00\u6B21\u6240\u6709\u540C\u7C7B\u5DE5\u5177\u8C03\u7528\u81EA\u52A8\u653E\u884C\uFF08\u5305\u62EC rm \u7B49\u5371\u9669\u547D\u4EE4\uFF09\u3002\u8BE5\u89C4\u5219\u53EA\u5728\u5185\u5B58\u4E2D\uFF0C\u91CD\u542F {agent} \u5373\u6062\u590D\u3002",
@@ -129,6 +134,7 @@ const BUBBLE_STRINGS = {
     kimiPermission: "Kimi \u6743\u9650\u8BF7\u6C42",
     checkKimiTerminal: "\u8BF7\u5728 Kimi \u7EC8\u7AEF\u4E2D\u6279\u51C6\u6216\u62D2\u7EDD\u8BE5\u8BF7\u6C42\u3002",
     gotIt: "\u77E5\u9053\u4E86",
+    openClaudeDesktop: "\u6253\u5F00 Claude Desktop",
     codexNeedsInput: "Codex \u9700\u8981\u4F60\u7684\u56DE\u7B54",
     goToCodex: "\u524D\u5F80 Codex",
     answerInCodex: "\u8BF7\u5728 Codex \u4E2D\u9009\u62E9\u6216\u8F93\u5165\u56DE\u7B54\u3002",
@@ -895,6 +901,38 @@ function show(data) {
     btnDeny.style.display = "none";
     suggestionsContainer.innerHTML = "";
     renderRegularTerminalFallback(data.lang);
+    revealCard();
+    return;
+  }
+
+  if (data.isClaudeDesktop) {
+    headerTitle.textContent = bubbleText(data.lang, "claudeDesktopPermission");
+    const mcp = parseMcpToolName(data.toolName);
+    toolPillText.textContent = mcp ? mcp.display : (data.toolName || "Unknown");
+    toolPill.setAttribute("data-tool", data.toolName || "");
+    toolPill.style.display = "";
+    commandBlock.textContent = formatDetail(
+      data.toolName,
+      data.toolInput,
+      { isAntigravity: !!data.isAntigravity },
+    );
+    // Claude Desktop owns the real authorization UI. The HUD is reminder-only
+    // so a failed native automation path can never look like an approval.
+    btnAllow.style.display = "none";
+    btnDeny.style.display = "none";
+    suggestionsContainer.innerHTML = "";
+
+    const open = document.createElement("button");
+    open.className = "btn-suggestion";
+    open.textContent = bubbleText(data.lang, "openClaudeDesktop");
+    open.addEventListener("click", () => {
+      open.disabled = true;
+      window.bubbleAPI.decide("claude-desktop:open");
+      setTimeout(() => {
+        open.disabled = false;
+      }, 350);
+    });
+    suggestionsContainer.appendChild(open);
     revealCard();
     return;
   }

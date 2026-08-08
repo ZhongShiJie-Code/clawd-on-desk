@@ -4,7 +4,7 @@
 // silently — see plan-opencode-family-shared-integration.md §3.2):
 //
 //   prefix-INDEPENDENT — plain module exports below:
-//     getEventSessionInfo, getEventSessionId, getEventParentSessionId,
+//     getEventSessionId, getEventParentSessionId,
 //     shouldDropMappedEventWithoutSessionId
 //
 //   prefix-DEPENDENT — produced by createSessionIdHelpers(prefix):
@@ -21,40 +21,12 @@ function normalizeSessionText(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-export function getEventSessionInfo(event) {
-  const empty = {
-    eventSessionId: null,
-    infoSessionId: null,
-    directory: null,
-  };
-  if (!event || typeof event !== "object") return empty;
-  const props = event.properties && typeof event.properties === "object"
-    ? event.properties
-    : {};
-  const info = props.info && typeof props.info === "object" && !Array.isArray(props.info)
-    ? props.info
-    : {};
-  const directory = typeof info.directory === "string" && info.directory.trim()
-    ? info.directory
-    : null;
-  return {
-    eventSessionId: normalizeSessionText(props.sessionID) || normalizeSessionText(event.sessionID),
-    infoSessionId: normalizeSessionText(info.id),
-    directory,
-  };
-}
-
 export function getEventSessionId(event) {
   if (!event || typeof event !== "object") return null;
   const props = event.properties && typeof event.properties === "object"
     ? event.properties
     : {};
-  const info = props.info && typeof props.info === "object" && !Array.isArray(props.info)
-    ? props.info
-    : {};
-  return normalizeSessionText(props.sessionID)
-    || normalizeSessionText(event.sessionID)
-    || normalizeSessionText(info.id);
+  return normalizeSessionText(props.sessionID) || normalizeSessionText(event.sessionID);
 }
 
 // Extract the parent session ID from a session.created event.

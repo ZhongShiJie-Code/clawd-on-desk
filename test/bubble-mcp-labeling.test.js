@@ -74,3 +74,16 @@ describe("permission payload carries Codex provenance (issue #445)", () => {
     assert.match(PERMISSION_SRC, /isCodex: permEntry\.isCodex \|\| false,/);
   });
 });
+
+describe("Claude Desktop HUD reminder mode", () => {
+  it("hides authorization controls and keeps only the native-app focus action", () => {
+    const branchStart = RENDERER_SRC.indexOf('if (data.isClaudeDesktop) {');
+    const branchEnd = RENDERER_SRC.indexOf('\n  // opencode-family branch', branchStart);
+    assert.ok(branchStart >= 0 && branchEnd > branchStart);
+    const branch = RENDERER_SRC.slice(branchStart, branchEnd);
+    assert.match(branch, /btnAllow\.style\.display = "none";/);
+    assert.match(branch, /btnDeny\.style\.display = "none";/);
+    assert.match(branch, /window\.bubbleAPI\.decide\("claude-desktop:open"\);/);
+    assert.doesNotMatch(branch, /claude-desktop:(?:once|always|deny)/);
+  });
+});

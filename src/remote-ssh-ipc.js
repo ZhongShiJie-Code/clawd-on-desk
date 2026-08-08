@@ -23,7 +23,7 @@ const {
   finalizeRetiredRemoteLayout,
   bootstrapIsolatedRuntime,
 } = require("./remote-ssh-deploy");
-const { buildSshArgs, checkSecureConnectReadiness } = require("./remote-ssh-runtime");
+const { buildSshArgs } = require("./remote-ssh-runtime");
 const {
   remoteOwnershipDomainKey,
 } = require("./remote-ssh-profile");
@@ -140,43 +140,6 @@ function registerRemoteSshIpc(options = {}) {
     remoteSshRuntime.off("remote-node-detected", onRemoteNodeDetected);
   });
 
-  // Profile CRUD travels through the generic settings IPC, not this module's
-  // connect/deploy handlers. Keep every existing runtime state on the latest
-  // committed profile so a queued reconnect cannot reuse a stale port or a
-  // deployment stamp that remoteSsh.update has just invalidated. Deletion must
-  // also cancel any live child/timer that still belongs to the removed id.
-  if (typeof settingsController.subscribeKey === "function") {
-    const unsubscribeRemoteSsh = settingsController.subscribeKey("remoteSsh", (remoteSsh) => {
-      const profiles = remoteSsh && Array.isArray(remoteSsh.profiles)
-        ? remoteSsh.profiles
-        : [];
-      const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
-      let statuses = [];
-      try {
-        statuses = remoteSshRuntime.listStatuses();
-      } catch (err) {
-        log("remote-ssh: could not list runtime states after settings update:", err && err.message);
-        return;
-      }
-      for (const status of statuses) {
-        if (!status || typeof status.profileId !== "string") continue;
-        const profile = profilesById.get(status.profileId);
-        try {
-          if (profile && typeof remoteSshRuntime.refreshProfile === "function") {
-            remoteSshRuntime.refreshProfile(profile);
-          } else if (!profile) {
-            remoteSshRuntime.disconnect(status.profileId);
-          }
-        } catch (err) {
-          log("remote-ssh: could not sync runtime profile", status.profileId, err && err.message);
-        }
-      }
-    });
-    if (typeof unsubscribeRemoteSsh === "function") {
-      disposers.push(unsubscribeRemoteSsh);
-    }
-  }
-
   // ── Status / list ──
 
   handle("remoteSsh:list-statuses", () => {
@@ -224,14 +187,6 @@ function registerRemoteSshIpc(options = {}) {
       );
     }
     const runtimeProfile = { ...profile, installId: binding.installId };
-    const readiness = checkSecureConnectReadiness(runtimeProfile);
-    if (!readiness.ok) {
-      const err = new Error(readiness.message);
-      err.reason = readiness.reason;
-      err.hint = readiness.hint;
-      err.detail = readiness.detail;
-      throw err;
-    }
     remoteSshRuntime.connect(runtimeProfile);
     if (profile.autoStartCodexMonitor === true) {
       startCodexMonitorFn({ profile: runtimeProfile, runtime: remoteSshRuntime, deps: { spawn } })
@@ -247,13 +202,7 @@ function registerRemoteSshIpc(options = {}) {
       connectProfile(profile);
       return { status: "ok", state: remoteSshRuntime.getProfileStatus(id) };
     } catch (err) {
-      return {
-        status: "error",
-        ...(err && err.reason ? { reason: err.reason } : {}),
-        ...(err && err.hint ? { hint: err.hint } : {}),
-        ...(err && err.detail ? { detail: err.detail } : {}),
-        message: (err && err.message) || "connect threw",
-      };
+      return { status: "error", message: (err && err.message) || "connect threw" };
     }
   });
 

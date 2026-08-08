@@ -89,27 +89,8 @@ const CLAUDE_HOOK_GUARD_NOTICE_TTL_MS = 30 * 60 * 1000;
 let httpServer = null;
 let activeServerPort = null;
 let lastClaudeHookGuardNotice = null;
-// Separate the persisted user authorization from short transactional tail
-// suppression. During Settings OFF / integration uninstall the preference or
-// agent gate is committed only after the settings.json mutation succeeds, so
-// this process-local flag closes the small pre-commit window immediately.
-let claudeStatuslineIngressSuppressed = false;
 const codexOfficialTurns = new Map();
 const recentHookEvents = new Map();
-
-function isClaudeStatuslineMetadataAllowed() {
-  return ctx.claudeQuotaCollectionEnabled === true && !claudeStatuslineIngressSuppressed;
-}
-
-function clearLocalClaudeStatuslineAuthority() {
-  if (typeof ctx.clearClaudeStatuslineAuthority !== "function") return 0;
-  return ctx.clearClaudeStatuslineAuthority("local");
-}
-
-function clearLocalClaudeQuota() {
-  if (typeof ctx.clearLocalClaudeQuota !== "function") return 0;
-  return ctx.clearLocalClaudeQuota();
-}
 
 function shouldDropForDnd() {
   if (typeof ctx.shouldDropForDnd === "function") {
@@ -322,12 +303,9 @@ function registerClaudeHooksTask(meta) {
             console.log("Clawd: registered Claude Code statusline");
           }
         } else {
-          claudeStatuslineIngressSuppressed = true;
           // Migration/startup cleanup is ownership-safe: the installer only
           // removes a statusLine command carrying Clawd's marker.
           unregisterClaudeStatusline({ backup: true, silent: true });
-          clearLocalClaudeStatuslineAuthority();
-          clearLocalClaudeQuota();
         }
       } catch (statuslineErr) {
         console.warn("Clawd: failed to sync Claude Code statusline:", statuslineErr.message);
@@ -355,18 +333,6 @@ function registerClaudeHooksTask(meta) {
       };
     }
 
-    // Settings Install / Enable commits the agent flag only after this task
-    // returns. Once the hook repair itself verifies, lift any suppression left
-    // by a previous uninstall. A third-party local statusline may remain
-    // untouched; the user preference still authorizes independently deployed
-    // local-profile senders such as WSL.
-    if (
-      ctx.claudeQuotaCollectionEnabled === true
-      && CLAUDE_STATUSLINE_REGISTER_SOURCES.has(meta.source)
-    ) {
-      claudeStatuslineIngressSuppressed = false;
-    }
-
     return { status: "ok", added, updated, removed };
   };
 }
@@ -374,25 +340,19 @@ function registerClaudeHooksTask(meta) {
 function unregisterClaudeHooksTask(meta) {
   return async () => {
     const { unregisterHooksAsync, unregisterClaudeStatusline } = require("../hooks/install.js");
-    const removesStatusline = CLAUDE_STATUSLINE_UNREGISTER_SOURCES.has(meta.source);
-    const previousSuppression = claudeStatuslineIngressSuppressed;
-    if (removesStatusline) claudeStatuslineIngressSuppressed = true;
-    try {
-      const hooksResult = await unregisterHooksAsync({ backup: true });
-      let statuslineResult = null;
-      if (removesStatusline) {
+    const hooksResult = await unregisterHooksAsync({ backup: true });
+    let statuslineResult = null;
+    if (CLAUDE_STATUSLINE_UNREGISTER_SOURCES.has(meta.source)) {
+      try {
         statuslineResult = unregisterClaudeStatusline({ backup: true, silent: true });
-        clearLocalClaudeStatuslineAuthority();
-        clearLocalClaudeQuota();
+      } catch (statuslineErr) {
+        console.warn("Clawd: failed to unregister Claude Code statusline:", statuslineErr.message);
       }
-      const removed = (hooksResult.removed || 0) + (statuslineResult ? (statuslineResult.removed || 0) : 0);
-      const changed = !!hooksResult.changed || !!(statuslineResult && statuslineResult.changed);
-      const backupPaths = [hooksResult.backupPath, statuslineResult && statuslineResult.backupPath].filter(Boolean);
-      return { status: "ok", removed, changed, backupPaths, hooks: hooksResult, statusline: statuslineResult };
-    } catch (err) {
-      if (removesStatusline) claudeStatuslineIngressSuppressed = previousSuppression;
-      throw err;
     }
+    const removed = (hooksResult.removed || 0) + (statuslineResult ? (statuslineResult.removed || 0) : 0);
+    const changed = !!hooksResult.changed || !!(statuslineResult && statuslineResult.changed);
+    const backupPaths = [hooksResult.backupPath, statuslineResult && statuslineResult.backupPath].filter(Boolean);
+    return { status: "ok", removed, changed, backupPaths, hooks: hooksResult, statusline: statuslineResult };
   };
 }
 
@@ -420,22 +380,13 @@ function setClaudeQuotaCollectionEnabled(callOptions = {}) {
       unregisterClaudeStatusline,
     } = require("../hooks/install.js");
     if (!enabled) {
-      const previousSuppression = claudeStatuslineIngressSuppressed;
-      claudeStatuslineIngressSuppressed = true;
-      try {
-        const result = unregisterClaudeStatusline({ backup: true, silent: true });
-        clearLocalClaudeStatuslineAuthority();
-        clearLocalClaudeQuota();
-        return { status: "ok", enabled: false, ...result };
-      } catch (err) {
-        claudeStatuslineIngressSuppressed = previousSuppression;
-        throw err;
-      }
+      const result = unregisterClaudeStatusline({ backup: true, silent: true });
+      return { status: "ok", enabled: false, ...result };
     }
     if (!shouldSyncAgentIntegration("claude-code")) {
       return {
         status: "error",
-        message: "Enable the Claude Code integration before collecting its usage metadata",
+        message: "Enable the Claude Code integration before collecting its quota",
       };
     }
     const result = registerClaudeStatusline({ backup: true, silent: true });
@@ -453,10 +404,6 @@ function setClaudeQuotaCollectionEnabled(callOptions = {}) {
         message: "Claude Code settings were not found",
       };
     }
-    // The settings controller persists the true preference immediately after
-    // this successful effect returns. Until then the live preference getter
-    // still keeps ingress closed; afterwards both halves of the gate are open.
-    claudeStatuslineIngressSuppressed = false;
     return { status: "ok", enabled: true, ...result };
   });
 }
@@ -679,7 +626,6 @@ function routeHttpRequest(req, res, remoteProfile = null) {
         codexOfficialTurns,
         captureForegroundWindowsTerminal: ctx.captureForegroundWindowsTerminal,
         remoteProfile,
-        isClaudeStatuslineMetadataAllowed,
       });
     } else if (req.method === "POST" && req.url === "/permission") {
       handlePermissionPost(req, res, {
@@ -827,7 +773,6 @@ return {
   syncClawdHooks,
   uninstallClaudeHooks: uninstallClaudeHooksQueued,
   setClaudeQuotaCollectionEnabled,
-  isClaudeStatuslineMetadataAllowed,
   setClaudeAutoStart,
   syncGeminiHooks,
   syncAntigravityHooks,

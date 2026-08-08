@@ -181,6 +181,67 @@ h1 {
   background: var(--interrupted);
 }
 
+.deepseek-section {
+  gap: 7px;
+}
+
+.deepseek-summary-row,
+.deepseek-model-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.deepseek-balance-label,
+.deepseek-updated,
+.deepseek-model-details {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.deepseek-balance-value {
+  margin-right: auto;
+  color: var(--running);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.deepseek-balance-value.balance-low {
+  color: var(--interrupted);
+}
+
+.deepseek-updated {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.deepseek-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 0 2px;
+  border-top: 1px solid var(--row-border);
+}
+
+.deepseek-model-name {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.deepseek-model-metrics {
+  min-width: 0;
+  color: var(--subtle);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.deepseek-model-details {
+  font-variant-numeric: tabular-nums;
+}
+
 .content {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -260,7 +321,13 @@ h1 {
 }
 
 .agent-icon {
+  display: block;
+  min-width: 28px;
+  min-height: 28px;
+  max-width: 28px;
+  max-height: 28px;
   object-fit: contain;
+  object-position: center;
   background: var(--surface-alt);
 }
 

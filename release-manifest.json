@@ -1,0 +1,21 @@
+{
+  "product": "Clawd on Desk",
+  "version": "0.14.0",
+  "channel": "custom",
+  "branch": "custom/v0.14.0",
+  "upstream": {
+    "repository": "https://github.com/rullerzhou-afk/clawd-on-desk.git",
+    "commit": "ce6acbc7ee4ef85029d4a1a870edb667cfd878c3"
+  },
+  "repository": "https://github.com/ZhongShiJie-Code/clawd-on-desk.git",
+  "mobileArtifactsRepository": "https://github.com/ZhongShiJie-Code/clawd-mobile-download.git",
+  "verification": {
+    "required": [
+      "npm run verify:release",
+      "npm run verify:custom",
+      "targeted tests for changed modules",
+      "real HUD smoke test"
+    ],
+    "fullSuiteStatus": "not-green-if-timeout"
+  }
+}

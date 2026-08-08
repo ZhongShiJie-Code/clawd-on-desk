@@ -624,6 +624,9 @@ const MAC_FOCUS_TIMEOUT_MS = 1500;
 // can answer (#465), so that one script gets a human-scale timeout.
 const MAC_FOCUS_CONSENT_TIMEOUT_MS = 15000;
 const MAC_OPEN_TIMEOUT_MS = 3000;
+const CLAUDE_DESKTOP_APP_CANDIDATES = Object.freeze([
+  "/Applications/Claude.app",
+]);
 // Ghostty's stone focus can return before WindowServer finishes committing the
 // Space switch. Real-device reload tests still yanked the window at 150ms;
 // Space animations are roughly 300-400ms, so keep a conservative settle gap.
@@ -2159,6 +2162,36 @@ function focusTerminalWindow(sourcePidOrRequest, cwd, editor, pidChain, meta) {
   return result;
 }
 
+function claudeDesktopAppCandidates() {
+  const candidates = [...CLAUDE_DESKTOP_APP_CANDIDATES];
+  const home = typeof os.homedir === "function" ? os.homedir() : "";
+  if (home) candidates.push(path.join(home, "Applications", "Claude.app"));
+  return candidates;
+}
+
+// Claude Desktop is a GUI app that reports Claude Code-compatible hook events,
+// not a terminal process. Activate its bundle directly so minimized/hidden
+// windows are restored without requiring Accessibility permission.
+function focusClaudeDesktopWindow(meta = {}) {
+  if (!isMac) {
+    logFocusResult(`branch=claude-desktop reason=unsupported-platform platform=${safeLogValue(process.platform)}`);
+    return { submitted: false, reason: "unsupported-platform" };
+  }
+  const candidates = claudeDesktopAppCandidates();
+  const tryNext = (idx) => {
+    if (idx >= candidates.length) {
+      logFocusResult("branch=claude-desktop reason=app-not-found");
+      return;
+    }
+    execFile("/usr/bin/open", [candidates[idx]], { timeout: MAC_OPEN_TIMEOUT_MS }, (err) => {
+      if (err) return tryNext(idx + 1);
+      logFocusResult(`branch=claude-desktop reason=opened source=${safeLogValue(meta.requestSource || "unknown")} sid=${safeLogValue(meta.sessionId || "")}`);
+    });
+  };
+  tryNext(0);
+  return { submitted: true, reason: "submitted" };
+}
+
 // macOS generic window focus (#465). Prefer LaunchServices activation
 // (`open <bundle>`) over System Events `set frontmost`: `open` carries
 // Dock-click reopen semantics, so it also restores minimized windows —
@@ -2338,12 +2371,14 @@ return {
   initFocusHelper,
   killFocusHelper,
   focusTerminalWindow,
+  focusClaudeDesktopWindow,
   captureGhosttyTerminalId,
   clearMacFocusCooldownTimer,
   cleanup,
   __test: {
     makeFocusCmd,
     extractMacAppBundlePath,
+    claudeDesktopAppCandidates,
     buildWindowsTitleCandidates,
     confirmForeground,
     isPositiveFocusReason,

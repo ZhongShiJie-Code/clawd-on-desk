@@ -3,6 +3,7 @@
 
 let screen;
 try { ({ screen } = require("electron")); } catch { screen = null; }
+const { execFileSync } = require("child_process");
 const {
   createStatePriorityConstants,
   getStatePriority,
@@ -96,12 +97,6 @@ const accountQuota = createAccountQuotaStore({
   persistPath: ctx.accountQuotaPersistPath || null,
   logWarn: console.warn,
 });
-// Upgrade cleanup: older builds retained the last local Claude quota even
-// after the user opted out. Remove that misleading cache before the first
-// snapshot while preserving Remote SSH and every non-Claude provider.
-if (ctx.claudeQuotaCollectionEnabled === false) {
-  clearLocalClaudeQuota({ broadcast: false });
-}
 const MAX_SESSIONS = 20;
 const ASSISTANT_OUTPUT_MAX = 2400;
 const CODEX_EXIT_PROBE_DELAYS_MS = [1000, 3000, 8000, 15000];
@@ -1198,45 +1193,6 @@ function normalizeContextUsage(value) {
   return out;
 }
 
-function normalizeContextUsageOrigin(value) {
-  return value === "claude-statusline" || value === "claude-transcript" ? value : null;
-}
-
-function resolveContextUsageUpdate(existing, incomingValue, incomingOriginValue) {
-  const existingUsage = normalizeContextUsage(existing && existing.contextUsage);
-  const existingOrigin = normalizeContextUsageOrigin(existing && existing.contextUsageOrigin);
-  const incomingUsage = normalizeContextUsage(incomingValue);
-  const incomingOrigin = normalizeContextUsageOrigin(incomingOriginValue);
-  if (!incomingUsage) {
-    return { contextUsage: existingUsage, contextUsageOrigin: existingOrigin };
-  }
-  if (incomingOrigin === "claude-statusline") {
-    return { contextUsage: incomingUsage, contextUsageOrigin: incomingOrigin };
-  }
-  if (
-    incomingOrigin === "claude-transcript"
-    && existingOrigin === "claude-statusline"
-    && existingUsage
-    && Number.isFinite(existingUsage.limit)
-    && existingUsage.limit > 0
-  ) {
-    const used = incomingUsage.used;
-    return {
-      contextUsage: {
-        used,
-        limit: existingUsage.limit,
-        percent: Math.max(0, Math.min(100, Math.round((used / existingUsage.limit) * 100))),
-        source: "claude",
-      },
-      contextUsageOrigin: "claude-statusline",
-    };
-  }
-  return {
-    contextUsage: incomingUsage,
-    contextUsageOrigin: incomingOrigin,
-  };
-}
-
 function updateSessionFocusMetadata(sessionId, opts = {}) {
   const id = typeof sessionId === "string" ? sessionId : "";
   if (!id) return false;
@@ -1270,18 +1226,10 @@ function updateSessionMetadata(sessionId, opts = {}) {
     debugSession(`metadata-only drop sid=${id} reason=no-session`);
     return false;
   }
-  const incomingContextUsage = normalizeContextUsage(opts.contextUsage);
-  if (!incomingContextUsage) return false;
-  const resolved = resolveContextUsageUpdate(
-    session,
-    incomingContextUsage,
-    opts.contextUsageOrigin
-  );
-  const usageChanged = JSON.stringify(resolved.contextUsage) !== JSON.stringify(session.contextUsage);
-  const originChanged = resolved.contextUsageOrigin !== normalizeContextUsageOrigin(session.contextUsageOrigin);
-  if (usageChanged || originChanged) {
-    session.contextUsage = resolved.contextUsage;
-    session.contextUsageOrigin = resolved.contextUsageOrigin;
+  const contextUsage = normalizeContextUsage(opts.contextUsage);
+  if (!contextUsage) return false;
+  if (JSON.stringify(contextUsage) !== JSON.stringify(session.contextUsage)) {
+    session.contextUsage = contextUsage;
     // Freshness stamp for telemetry arbitration. Deliberately a separate
     // field from updatedAt: staleness sweeps, badge derivation and eviction
     // all key on updatedAt, and a statusline heartbeat must not feed them.
@@ -1293,18 +1241,6 @@ function updateSessionMetadata(sessionId, opts = {}) {
   return true;
 }
 
-function clearClaudeStatuslineAuthority(profileId = "local") {
-  let cleared = 0;
-  for (const session of sessions.values()) {
-    if (!session || session.agentId !== "claude-code") continue;
-    if ((session.profileId || "local") !== profileId) continue;
-    if (session.contextUsageOrigin !== "claude-statusline") continue;
-    session.contextUsageOrigin = null;
-    cleared++;
-  }
-  return cleared;
-}
-
 // Account-wide rate-limit quota reported by one source (host prefix for
 // remotes, null for this machine). Session-independent by design: the
 // numbers must survive session eviction and app restarts so "check the
@@ -1314,19 +1250,6 @@ function updateAccountQuota(host, quotas = {}) {
   const changed = accountQuota.update(host, quotas);
   if (changed) emitSessionSnapshot();
   return changed;
-}
-
-function clearLocalClaudeQuota(options = {}) {
-  const cleared = accountQuota.clearProvider(
-    "claudeQuota",
-    (sourceKey) => !sourceKey.startsWith("remote:")
-  );
-  if (!cleared) return 0;
-  // An explicit opt-out is a data-lifecycle boundary, not a routine refresh:
-  // persist it synchronously so a crash/restart cannot resurrect stale quota.
-  accountQuota.flush();
-  if (options.broadcast !== false) emitSessionSnapshot();
-  return cleared;
 }
 
 // Distinct reporting sources that currently carry quota (this machine + WSL /
@@ -1505,7 +1428,6 @@ function updateSession(sessionId, state, event, opts = {}) {
     displayHint = undefined,
     sessionTitle = null,
     contextUsage = null,
-    contextUsageOrigin = null,
     assistantLastOutput = null,
     assistantLastOutputTruncated = false,
     toolName = null,
@@ -1606,9 +1528,7 @@ function updateSession(sessionId, state, event, opts = {}) {
       const srcCodexSource = codexSource || (existing && existing.codexSource) || null;
       const srcGhosttyTerminalId = normalizeGhosttyTerminalId(ghosttyTerminalId) || (existing && existing.ghosttyTerminalId) || null;
       const srcSessionTitle = normalizeTitle(sessionTitle) || (existing && existing.sessionTitle) || null;
-      const permissionContext = resolveContextUsageUpdate(existing, contextUsage, contextUsageOrigin);
-      const srcContextUsage = permissionContext.contextUsage;
-      const srcContextUsageOrigin = permissionContext.contextUsageOrigin;
+      const srcContextUsage = normalizeContextUsage(contextUsage) || (existing && existing.contextUsage) || null;
       // PermissionRequest should flash the pet via setState("notification"),
       // but a brand-new Codex permission session must not persist as
       // notification. Otherwise, if the prompt is resolved remotely and no
@@ -1648,7 +1568,6 @@ function updateSession(sessionId, state, event, opts = {}) {
         ghosttyTerminalId: srcGhosttyTerminalId,
         sessionTitle: srcSessionTitle,
         contextUsage: srcContextUsage,
-        contextUsageOrigin: srcContextUsageOrigin,
         recentEvents,
         pidReachable: resolvePidReachable(existing, srcAgentPid, srcPid),
         resumeState: (existing && existing.resumeState) || null,
@@ -1724,18 +1643,7 @@ function updateSession(sessionId, state, event, opts = {}) {
   // Sticky: empty input does not clear an existing title. A session that has
   // ever been named keeps that name until the user explicitly renames it.
   const srcSessionTitle = normalizeTitle(sessionTitle) || (existing && existing.sessionTitle) || null;
-  const normalizedIncomingContextUsage = normalizeContextUsage(contextUsage);
-  const effectiveContextUsageOrigin = normalizeContextUsageOrigin(contextUsageOrigin)
-    || (srcAgentId === "claude-code" && normalizedIncomingContextUsage && normalizedIncomingContextUsage.source === "claude"
-      ? "claude-transcript"
-      : null);
-  const resolvedContextUsage = resolveContextUsageUpdate(
-    existing,
-    normalizedIncomingContextUsage,
-    effectiveContextUsageOrigin
-  );
-  const srcContextUsage = resolvedContextUsage.contextUsage;
-  const srcContextUsageOrigin = resolvedContextUsage.contextUsageOrigin;
+  const srcContextUsage = normalizeContextUsage(contextUsage) || (existing && existing.contextUsage) || null;
   const srcAssistantLastOutput = normalizeAssistantOutput(assistantLastOutput);
   const srcAssistantLastOutputTruncated = !!(srcAssistantLastOutput && assistantLastOutputTruncated === true);
   const srcToolName = normalizeToolName(toolName) || (existing && existing.lastToolName) || null;
@@ -1864,7 +1772,7 @@ function updateSession(sessionId, state, event, opts = {}) {
   // (contextUsage): a lifecycle event that carries it forward from
   // `existing` must not silently reset the freshness stamp.
   const srcMetadataUpdatedAt = existing && Number.isFinite(existing.metadataUpdatedAt) ? existing.metadataUpdatedAt : null;
-  const base = { sourcePid: srcPid, wtHwnd: srcWtHwnd, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain, tmuxSocket: srcTmuxSocket, tmuxClient: srcTmuxClient, orcaPaneKey: srcOrcaPaneKey, agentPid: srcAgentPid, agentId: srcAgentId, profileId: (existing && existing.profileId) || profileId || "local", rawSessionId: (existing && existing.rawSessionId) || rawSessionId || sessionId, sessionAutomationIdentity: srcSessionAutomationIdentity, host: srcHost, wslDistro: srcWslDistro, headless: srcHeadless, platform: srcPlatform, model: srcModel, provider: srcProvider, codexOriginator: srcCodexOriginator, codexSource: srcCodexSource, ghosttyTerminalId: srcGhosttyTerminalId, sessionTitle: srcSessionTitle, contextUsage: srcContextUsage, contextUsageOrigin: srcContextUsageOrigin, metadataUpdatedAt: srcMetadataUpdatedAt, assistantLastOutput: srcAssistantLastOutput, assistantLastOutputTruncated: srcAssistantLastOutputTruncated, lastToolName: srcToolName, transcriptPath: srcTranscriptPath, recentEvents, pidReachable, lastToolBoundaryAt: srcLastToolBoundaryAt, lastStopAt: srcLastStopAt, awaitingInputSinceStop: resolveAwaitingInputSinceStop(existing, event), muteNotificationSound: state === "notification" && muteNotificationSound === true };
+  const base = { sourcePid: srcPid, wtHwnd: srcWtHwnd, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain, tmuxSocket: srcTmuxSocket, tmuxClient: srcTmuxClient, orcaPaneKey: srcOrcaPaneKey, agentPid: srcAgentPid, agentId: srcAgentId, profileId: (existing && existing.profileId) || profileId || "local", rawSessionId: (existing && existing.rawSessionId) || rawSessionId || sessionId, sessionAutomationIdentity: srcSessionAutomationIdentity, host: srcHost, wslDistro: srcWslDistro, headless: srcHeadless, platform: srcPlatform, model: srcModel, provider: srcProvider, codexOriginator: srcCodexOriginator, codexSource: srcCodexSource, ghosttyTerminalId: srcGhosttyTerminalId, sessionTitle: srcSessionTitle, contextUsage: srcContextUsage, metadataUpdatedAt: srcMetadataUpdatedAt, assistantLastOutput: srcAssistantLastOutput, assistantLastOutputTruncated: srcAssistantLastOutputTruncated, lastToolName: srcToolName, transcriptPath: srcTranscriptPath, recentEvents, pidReachable, lastToolBoundaryAt: srcLastToolBoundaryAt, lastStopAt: srcLastStopAt, awaitingInputSinceStop: resolveAwaitingInputSinceStop(existing, event), muteNotificationSound: state === "notification" && muteNotificationSound === true };
   if (preserveCompletionAck) base.requiresCompletionAck = true;
 
   // Evict oldest session if at capacity and this is a new session.
@@ -2182,7 +2090,6 @@ function restoreSessionFromLease(lease) {
     ghosttyTerminalId: null,
     sessionTitle: typeof lease.title === "string" ? lease.title : null,
     contextUsage: null,
-    contextUsageOrigin: null,
     antigravityQuota: null,
     claudeQuota: null,
     metadataUpdatedAt: null,
@@ -2208,6 +2115,24 @@ function isProcessAlive(pid) {
   try { _kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 }
 
+function isClaudeDesktopProcessAlive(cwd) {
+  if (process.platform !== "darwin" || typeof cwd !== "string" || !cwd.trim()) return null;
+  const normalizedCwd = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!/\/Claude-3p\/local-agent-mode-sessions\/[^/]+\/[^/]+\/local_[^/]+\/outputs$/.test(normalizedCwd)) {
+    return null;
+  }
+  try {
+    const output = execFileSync("/bin/ps", ["-axo", "pid=,command="], {
+      encoding: "utf8",
+      timeout: 1000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return output.split("\n").some((line) => line.includes(normalizedCwd));
+  } catch {
+    return null;
+  }
+}
+
 function cleanStaleSessions() {
   const now = Date.now();
   let changed = false;
@@ -2216,10 +2141,19 @@ function cleanStaleSessions() {
   // dead buckets too and force a snapshot refresh when it does.
   let snapshotRefreshNeeded = accountQuota.prune();
   const staleConfig = typeof ctx.getStaleConfig === "function" ? ctx.getStaleConfig() : null;
+  const claudeDesktopProcessByCwd = new Map();
   for (const [id, s] of sessions) {
+    const isDesktopProcessAlive = (cwd) => {
+      const key = typeof cwd === "string" ? cwd : "";
+      if (claudeDesktopProcessByCwd.has(key)) return claudeDesktopProcessByCwd.get(key);
+      const result = isClaudeDesktopProcessAlive(cwd);
+      claudeDesktopProcessByCwd.set(key, result);
+      return result;
+    };
     const decision = getStaleSessionDecision(s, {
       now,
       isProcessAlive,
+      isClaudeDesktopProcessAlive: isDesktopProcessAlive,
       deriveSessionBadge,
       shouldAutoClearDetachedSession,
       staleConfig,
@@ -2798,9 +2732,7 @@ return {
   formatStdinDiag,
   updateSessionFocusMetadata,
   updateSessionMetadata,
-  clearClaudeStatuslineAuthority,
   updateAccountQuota,
-  clearLocalClaudeQuota,
   getQuotaSourceCount,
   clearPermissionNotification,
   ackSessionCompletion,

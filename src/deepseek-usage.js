@@ -39,9 +39,17 @@ function localDateKey(ms = Date.now()) {
   return `${year}-${month}-${day}`;
 }
 
+function usageDateKey(value) {
+  const text = String(value || "").trim();
+  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})(?:$|[T\s])/);
+  if (isoMatch) return isoMatch[1];
+  const compactMatch = text.match(/^(\d{4})(\d{2})(\d{2})(?:$|[T\s])/);
+  return compactMatch ? `${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}` : "";
+}
+
 function sameUsageDate(value, date) {
-  const left = String(value || "").trim().replace(/-/g, "");
-  const right = String(date || "").trim().replace(/-/g, "");
+  const left = usageDateKey(value);
+  const right = usageDateKey(date);
   return left !== "" && left === right;
 }
 
@@ -420,7 +428,7 @@ function aggregateOfficialUsage(options = {}) {
 
     if (amountFile) {
       for (const row of readCsvRows(path.join(dir, amountFile))) {
-        if (!sameUsageDate(row.utc_date, date)) continue;
+        if (!sameUsageDate(row.utc_date || row.start_time_iso, date)) continue;
         const model = normalizeModel(row.model);
         if (!model) continue;
         const stats = statsMap.get(model);
@@ -438,7 +446,7 @@ function aggregateOfficialUsage(options = {}) {
 
     if (costFile) {
       for (const row of readCsvRows(path.join(dir, costFile))) {
-        if (!sameUsageDate(row.utc_date, date)) continue;
+        if (!sameUsageDate(row.utc_date || row.start_time_iso, date)) continue;
         const model = normalizeModel(row.model);
         if (!model) continue;
         const stats = statsMap.get(model);
@@ -671,6 +679,7 @@ module.exports.__test = {
   usageFromGatewayUsageReportLine,
   readGatewayUsageRecords,
   normalizeModel,
+  usageDateKey,
   sameUsageDate,
   usageFromOpenClawMessage,
   usageFromHermesDoneEvent,

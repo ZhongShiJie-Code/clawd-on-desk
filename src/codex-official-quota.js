@@ -37,7 +37,8 @@ function parseWindow(window, capturedAt) {
   if (!window || typeof window !== "object") return null;
   const rawUsed = Number(window.used_percent);
   if (!Number.isFinite(rawUsed)) return null;
-  const usedPercent = Math.max(0, Math.min(100, rawUsed >= 0 && rawUsed <= 1 ? rawUsed * 100 : rawUsed));
+  // The official endpoint already returns a percentage, so 1 means 1%, not 0.01.
+  const usedPercent = Math.max(0, Math.min(100, rawUsed));
   const seconds = Number(window.limit_window_seconds);
   const windowMinutes = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds / 60) : null;
   const resetAt = parseResetAt(window.reset_at);
@@ -166,3 +167,8 @@ function initOfficialCodexQuota(options = {}) {
 }
 
 module.exports = initOfficialCodexQuota;
+module.exports.__test = {
+  parseResetAt,
+  parseWindow,
+  parseUsage,
+};

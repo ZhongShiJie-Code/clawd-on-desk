@@ -24,6 +24,18 @@ function getCodexThreadUrl(entry) {
     : null;
 }
 
+// Claude Desktop Cowork workspaces are internal outputs folders rather than
+// terminal sessions. Restrict this target to the known local-agent path so an
+// ordinary Claude Code session cannot unexpectedly open the Desktop app.
+function isClaudeDesktopFocusEntry(entry, options = {}) {
+  if (!entry || entry.agentId !== "claude-code") return false;
+  if (entry.host || entry.headless === true || entry.platform === "webui") return false;
+  const osPlatform = normalizeOsPlatform(options);
+  if (osPlatform && osPlatform !== "darwin") return false;
+  const cwd = normalizeString(entry.cwd).replace(/\\/g, "/").replace(/\/+$/, "");
+  return /\/Claude-3p\/local-agent-mode-sessions\/[^/]+\/[^/]+\/(?:local_[^/]+|[0-9a-f]{8,})\/outputs$/i.test(cwd);
+}
+
 function hasSupportedOrcaPaneTarget(entry, options = {}) {
   const paneKey = normalizeString(entry && entry.orcaPaneKey);
   if (!paneKey || paneKey.length > 256) return false;
@@ -47,6 +59,10 @@ function getSessionFocusTarget(entry, options = {}) {
   const codexThreadUrl = getCodexThreadUrl(entry);
   if (codexThreadUrl) {
     return { canFocus: true, type: "codex-thread", url: codexThreadUrl };
+  }
+
+  if (isClaudeDesktopFocusEntry(entry, options)) {
+    return { canFocus: true, type: "claude-desktop", url: null };
   }
 
   if (entry.sourcePid) {
@@ -100,5 +116,6 @@ module.exports = {
   getDirectSendFocusTarget,
   getFocusableLocalHudSessionIds,
   getSessionFocusTarget,
+  isClaudeDesktopFocusEntry,
   isFocusableLocalHudSession,
 };

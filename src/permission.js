@@ -2675,6 +2675,7 @@ function buildPermissionBubblePayload(permEntry) {
     isCodexSubagent: permEntry.isCodex === true && permEntry.codexSessionRole === "subagent",
     codexAgentNickname: permEntry.codexAgentNickname || null,
     isCodexUserInputNotify: permEntry.isCodexUserInputNotify || false,
+    isClaudeDesktopNotify: permEntry.isClaudeDesktopNotify || false,
     codexUserInputCallId: permEntry.codexUserInputCallId || null,
     isRemote: !!permEntry.host,
     // Hermes must NOT get the regular go-to-terminal fallback: its opt-in
@@ -4455,7 +4456,7 @@ function handleDecide(event, behavior) {
     }
     return;
   }
-  if (perm.isCodexNotify || perm.isKimiNotify) {
+  if (perm.isCodexNotify || perm.isKimiNotify || perm.isClaudeDesktopNotify) {
     dismissPassiveNotify(perm, "ipc-decide");
     // Kimi Code's cue is a heads-up that its terminal is blocking on a native
     // approve/reject prompt, so "Got it" doubles as "take me there": focus the
@@ -4819,9 +4820,60 @@ function showKimiNotifyBubble({ sessionId, command, toolName, permissionAction, 
   schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
 }
 
+function showClaudeDesktopPermissionReminder({ sessionId, requestId, toolName }) {
+  if (!sessionId || !requestId) return false;
+  const policy = getPolicy(ctx, "notification");
+  if (ctx.doNotDisturb || !policy.enabled) return false;
+  const requestKey = `${String(sessionId)}:${String(requestId)}`;
+  const existing = pendingPermissions.find((entry) =>
+    entry && entry.isClaudeDesktopNotify && entry.claudeDesktopRequestKey === requestKey
+  );
+  if (existing) return true;
+  const safeToolName = typeof toolName === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(toolName)
+    ? toolName
+    : "Tool";
+  const permEntry = {
+    res: null,
+    abortHandler: null,
+    suggestions: [],
+    sessionId: String(sessionId),
+    bubble: null,
+    hideTimer: null,
+    toolName: "ClaudeDesktopPermission",
+    toolInput: {},
+    claudeDesktopRequestKey: requestKey,
+    claudeDesktopToolName: safeToolName,
+    createdAt: Date.now(),
+    interaction: classifyPermissionInteraction({
+      agentId: "claude-code",
+      eventKind: "notification",
+      toolName: "ClaudeDesktopPermission",
+    }),
+    isElicitation: false,
+    isClaudeDesktopNotify: true,
+    agentId: "claude-code",
+    autoExpireTimer: null,
+  };
+  addPendingPermission(permEntry, "passive-added");
+  showPermissionBubble(permEntry);
+  schedulePassiveNotifyAutoExpire(permEntry, policy.autoCloseMs);
+  return true;
+}
+
+function clearClaudeDesktopPermissionReminder({ sessionId, requestId }) {
+  if (!sessionId || !requestId) return 0;
+  const requestKey = `${String(sessionId)}:${String(requestId)}`;
+  const entries = pendingPermissions.filter((entry) =>
+    entry && entry.isClaudeDesktopNotify && entry.claudeDesktopRequestKey === requestKey
+  );
+  for (const entry of entries) dismissPassiveNotify(entry, "claude-permission-resolved");
+  return entries.length;
+}
+
 function getPassiveNotifyAgentId(permEntry) {
   if (permEntry?.isCodexNotify || permEntry?.isCodexUserInputNotify) return "codex";
   if (permEntry?.isKimiNotify) return "kimi-cli";
+  if (permEntry?.isClaudeDesktopNotify) return "claude-code";
   return permEntry?.agentId || "unknown";
 }
 
@@ -5192,6 +5244,7 @@ return {
   showCodexNotifyBubble, clearCodexNotifyBubbles,
   showCodexUserInputBubble, clearCodexUserInputBubbles,
   showKimiNotifyBubble, clearKimiNotifyBubbles,
+  showClaudeDesktopPermissionReminder, clearClaudeDesktopPermissionReminder,
   refreshPassiveNotifyAutoClose,
   refreshPermissionAutoCloseForPolicy,
   dismissPermissionsByAgent, dismissInteractivePermissionBubbles,

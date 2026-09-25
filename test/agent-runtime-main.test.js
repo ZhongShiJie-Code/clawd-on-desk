@@ -1630,4 +1630,63 @@ describe("agent-runtime-main", () => {
     assert.strictEqual(starts, 0);
     runtime.cleanup();
   });
+
+  it("routes CLIProxyAPI Codex quota updates to account state and stops the monitor", () => {
+    let quotaCallback = null;
+    let starts = 0;
+    let stops = 0;
+    const quotaCalls = [];
+    const runtime = createAgentRuntimeMain({
+      codexSubagentClassifier: {},
+      enableCliProxyApiCodexQuota: true,
+      loadCliProxyApiCodexQuotaMonitor: () => (options) => {
+        quotaCallback = options.onQuota;
+        return {
+          start() { starts += 1; },
+          stop() { stops += 1; },
+        };
+      },
+      loadCodexLogMonitor: () => makeFakeMonitorClass([]),
+      loadCodexAgent: () => ({ id: "codex" }),
+      isAgentEnabled: () => false,
+      getStateRuntime: () => ({
+        updateAccountQuota: (...args) => quotaCalls.push(args),
+      }),
+    });
+
+    runtime.startCodexLogMonitor();
+    assert.strictEqual(starts, 1);
+    const codexQuota = { codexFiveHour: { usedPercent: 42, resetAt: 123 } };
+    quotaCallback(codexQuota);
+    assert.deepStrictEqual(quotaCalls, [[null, { codexQuota }]]);
+    runtime.cleanup();
+    assert.strictEqual(stops, 1);
+  });
+
+  it("routes Antigravity CLI account quota snapshots to account state and stops the monitor", () => {
+    let quotaCallback = null;
+    let starts = 0;
+    let stops = 0;
+    const quotaCalls = [];
+    const runtime = createAgentRuntimeMain({
+      codexSubagentClassifier: {},
+      enableAntigravityQuota: true,
+      loadAntigravityQuotaMonitor: () => (options) => {
+        quotaCallback = options.onQuota;
+        return {
+          start() { starts += 1; },
+          stop() { stops += 1; },
+        };
+      },
+      getStateRuntime: () => ({ updateAccountQuota: (...args) => quotaCalls.push(args) }),
+    });
+
+    runtime.startAntigravityQuotaMonitor();
+    assert.strictEqual(starts, 1);
+    const antigravityQuota = { geminiFiveHour: { usedPercent: 42, resetAt: 123 } };
+    quotaCallback(antigravityQuota);
+    assert.deepStrictEqual(quotaCalls, [[null, { antigravityQuota }]]);
+    runtime.cleanup();
+    assert.strictEqual(stops, 1);
+  });
 });

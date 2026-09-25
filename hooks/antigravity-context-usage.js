@@ -87,9 +87,45 @@ function resolveAntigravityQuota(payload) {
   return normalizeQuotaGroup(invertAntigravityQuotaPayload(quota), ANTIGRAVITY_QUOTA_FIELDS);
 }
 
+// Official `agy -p "/usage" --output-format json` output. The CLI and Desktop
+// share account entitlements, so this account-wide snapshot also reflects
+// quota consumed by Desktop; it cannot attribute usage to a specific client.
+function resolveAntigravityCommandQuota(payload, nowMs = Date.now()) {
+  const groups = payload
+    && payload.command
+    && payload.command.data
+    && Array.isArray(payload.command.data.groups)
+    ? payload.command.data.groups
+    : null;
+  if (!groups) return null;
+
+  const out = {};
+  for (const group of groups) {
+    for (const bucket of (group && Array.isArray(group.buckets) ? group.buckets : [])) {
+      const field = QUOTA_BUCKET_KEYS[bucket && bucket.id];
+      if (!field) continue;
+      const remaining = Number(bucket.remaining_fraction);
+      if (!Number.isFinite(remaining)) continue;
+
+      const entry = {
+        usedPercent: (1 - Math.max(0, Math.min(1, remaining))) * 100,
+        capturedAt: nowMs,
+      };
+      const resetAt = typeof bucket.reset_time === "string" ? Date.parse(bucket.reset_time) : NaN;
+      if (Number.isFinite(resetAt) && resetAt > 0) entry.resetAt = resetAt;
+      const window = typeof bucket.window === "string" ? bucket.window.toLowerCase() : "";
+      if (window === "5h") entry.windowMinutes = 5 * 60;
+      else if (window === "weekly") entry.windowMinutes = 7 * 24 * 60;
+      out[field] = entry;
+    }
+  }
+  return normalizeQuotaGroup(out, ANTIGRAVITY_QUOTA_FIELDS);
+}
+
 module.exports = {
   resolveAntigravityContextUsage,
   resolveAntigravityModelLabel,
   resolveAntigravityQuota,
+  resolveAntigravityCommandQuota,
   ANTIGRAVITY_QUOTA_FIELDS,
 };

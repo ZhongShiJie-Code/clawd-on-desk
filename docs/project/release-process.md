@@ -70,6 +70,23 @@ Download and smoke-test the draft release assets before publishing the draft.
 If the draft is wrong, fix the issue before publishing; do not publish a known
 bad draft release.
 
+### v1.1.1 Draft Smoke Checklist
+
+For the locally maintained integration and quota changes, use a packaged build
+and record which checks were actually completed. This draft is not a signed
+macOS release: do not push a release tag until the repository has the required
+Developer ID signing and notarization secrets.
+
+- Confirm the packaged app shows `1.1.1` metadata.
+- Confirm Settings -> About shows `v1.1.1`, sourced from `app.getVersion()`.
+- Exercise Antigravity quota collection with the official
+  `agy -p "/usage" --output-format json` command; verify account-wide Gemini
+  and third-party buckets appear without logging raw responses.
+- Confirm the packaged monitor starts and stops with the application lifecycle.
+- For macOS, treat ad-hoc signed output as local/manual-install validation only;
+  verify Developer ID, Gatekeeper acceptance, notarization, and a downloaded
+  GitHub asset before calling automatic updates validated.
+
 ### v1.1.0 Draft Smoke Checklist
 
 Use the draft release installer or package artifact, not `npm start`. Windows

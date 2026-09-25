@@ -82,6 +82,34 @@ describe("session focus helpers", () => {
     });
   });
 
+  it("maps only local Cowork output sessions to Claude Desktop focus", () => {
+    const cowork = {
+      id: "claude-code:local_abc123",
+      agentId: "claude-code",
+      cwd: "/Users/test/Library/Application Support/Claude-3p/local-agent-mode-sessions/org/workspace/abc12345/outputs",
+      state: "working",
+    };
+    assert.deepStrictEqual(getSessionFocusTarget(cowork, { osPlatform: "darwin" }), {
+      canFocus: true,
+      type: "claude-desktop",
+      url: null,
+    });
+    assert.deepStrictEqual(getSessionFocusTarget(cowork, { osPlatform: "win32" }), {
+      canFocus: false,
+      type: null,
+      url: null,
+    });
+    assert.deepStrictEqual(getSessionFocusTarget({
+      ...cowork,
+      cwd: "/Users/test/project",
+      sourcePid: 123,
+    }, { osPlatform: "darwin" }), {
+      canFocus: true,
+      type: "terminal",
+      url: null,
+    });
+  });
+
   it("keeps Codex CLI UUIDs on the terminal focus path", () => {
     const entry = {
       id: "codex:019e115a-4df2-7ed0-b90e-8e6345aca777",

@@ -7,6 +7,7 @@ const {
   resolveAntigravityContextUsage,
   resolveAntigravityModelLabel,
   resolveAntigravityQuota,
+  resolveAntigravityCommandQuota,
 } = require("../hooks/antigravity-context-usage");
 
 describe("Antigravity context usage parser", () => {
@@ -158,5 +159,55 @@ describe("Antigravity account quota parser", () => {
     });
     assert.strictEqual(quota.geminiFiveHour.usedPercent, 0);
     assert.strictEqual(quota.geminiWeekly.usedPercent, 100);
+  });
+
+  it("parses the official read-only /usage JSON buckets used by Antigravity Desktop and CLI", () => {
+    const quota = resolveAntigravityCommandQuota({
+      command: {
+        data: {
+          groups: [
+            { buckets: [
+              { id: "gemini-5h", window: "5h", remaining_fraction: 0.75, reset_time: "2026-09-25T11:00:00Z" },
+              { id: "gemini-weekly", window: "weekly", remaining_fraction: 0.8, reset_time: "2026-10-01T11:00:00Z" },
+            ] },
+            { buckets: [
+              { id: "3p-5h", window: "5h", remaining_fraction: 0.5 },
+              { id: "3p-weekly", window: "weekly", remaining_fraction: 1, reset_time: "2026-10-02T11:00:00Z" },
+              { id: "unknown", window: "daily", remaining_fraction: 0 },
+            ] },
+          ],
+        },
+      },
+    }, 1780000000000);
+
+    assert.deepStrictEqual(quota, {
+      geminiFiveHour: {
+        usedPercent: 25,
+        windowMinutes: 300,
+        resetAt: Date.parse("2026-09-25T11:00:00Z"),
+        capturedAt: 1780000000000,
+      },
+      geminiWeekly: {
+        usedPercent: 20,
+        windowMinutes: 10080,
+        resetAt: Date.parse("2026-10-01T11:00:00Z"),
+        capturedAt: 1780000000000,
+      },
+      thirdPartyFiveHour: {
+        usedPercent: 50,
+        windowMinutes: 300,
+        capturedAt: 1780000000000,
+      },
+      thirdPartyWeekly: {
+        usedPercent: 0,
+        windowMinutes: 10080,
+        resetAt: Date.parse("2026-10-02T11:00:00Z"),
+        capturedAt: 1780000000000,
+      },
+    });
+  });
+
+  it("returns null when the official command has no recognized quota buckets", () => {
+    assert.strictEqual(resolveAntigravityCommandQuota({ command: { data: { groups: [{ buckets: [] }] } } }), null);
   });
 });

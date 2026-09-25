@@ -75,6 +75,21 @@ function querySupersetWorkspaceId(dbPath, cwd, callback) {
 
 module.exports = function initFocus(ctx) {
 
+function focusClaudeDesktopWindow(meta = {}) {
+  if (!isMac) return { submitted: false, reason: "unsupported-platform" };
+  const candidates = [...CLAUDE_DESKTOP_APP_CANDIDATES];
+  const home = os.homedir();
+  if (home) candidates.push(path.join(home, "Applications", "Claude.app"));
+  const appPath = candidates.find((candidate) => {
+    try { return fs.existsSync(candidate); } catch { return false; }
+  });
+  if (!appPath) return { submitted: false, reason: "claude-desktop-not-found" };
+  execFile("/usr/bin/open", [appPath], { timeout: MAC_OPEN_TIMEOUT_MS }, (err) => {
+    logFocusResult(`branch=claude-desktop reason=${err ? "open-failed" : "open-submitted"} source=${safeLogValue(meta.requestSource || "session-hud")}`);
+  });
+  return { submitted: true, reason: "claude-desktop-open-submitted" };
+}
+
 const FOCUS_RESULT_PREFIX = "__CLAWD_FOCUS_RESULT__ ";
 
 const PS_FOCUS_ADDTYPE = `
@@ -639,6 +654,7 @@ const MAC_FOCUS_TIMEOUT_MS = 1500;
 // can answer (#465), so that one script gets a human-scale timeout.
 const MAC_FOCUS_CONSENT_TIMEOUT_MS = 15000;
 const MAC_OPEN_TIMEOUT_MS = 3000;
+const CLAUDE_DESKTOP_APP_CANDIDATES = ["/Applications/Claude.app"];
 // Ghostty's stone focus can return before WindowServer finishes committing the
 // Space switch. Real-device reload tests still yanked the window at 150ms;
 // Space animations are roughly 300-400ms, so keep a conservative settle gap.
@@ -2357,6 +2373,7 @@ function cleanup() {
 return {
   initFocusHelper,
   killFocusHelper,
+  focusClaudeDesktopWindow,
   focusTerminalWindow,
   captureGhosttyTerminalId,
   clearMacFocusCooldownTimer,

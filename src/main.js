@@ -199,6 +199,7 @@ const { focusCodexThreadTarget } = require("./session-focus-handoff");
 const { isSessionInProgress } = require("./state-session-snapshot");
 const { restoreSessionsFromRecoveryLeases } = require("./session-recovery-loader");
 const { createSessionHistoryRuntime } = require("./session-history-runtime");
+const { createClaudeDesktopCoworkBridge } = require("./claude-desktop-cowork-bridge");
 const { getAllAgents, getAgent } = require("../agents/registry");
 const { getAgentIconUrl } = require("./state-agent-icons");
 // ── Autoplay policy: allow sound playback without user gesture ──
@@ -2098,6 +2099,10 @@ const _perm = initPermission(_permCtx);
 permissionPresentationRuntime = _perm;
 const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS, addPendingPermission, removePendingPermission, isPermissionEntryLive, canAutoResolvePendingPermission, beginSessionTrustConfirmation, endSessionTrustConfirmation, syncPermissionBubbleContent, maybeStartRemoteApproval, clearCodexNotifyBubbles, showCodexUserInputBubble, clearCodexUserInputBubbles, showKimiNotifyBubble, clearKimiNotifyBubbles, syncPermissionShortcuts, replyOpencodeFamilyPermission, dismissOpencodeFamilyPermissionResolvedExternally } = _perm;
 const pendingPermissions = _perm.pendingPermissions;
+const claudeDesktopCoworkBridge = createClaudeDesktopCoworkBridge({
+  onPermissionRequest: (item) => _perm.showClaudeDesktopPermissionReminder(item),
+  onPermissionResolved: (item) => _perm.clearClaudeDesktopPermissionReminder(item),
+});
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
 let sessionDebugLog = null; // set after app.whenReady()
@@ -2580,6 +2585,7 @@ const _focus = require("./focus")({ _allowSetForeground, focusLog });
 const {
   initFocusHelper,
   killFocusHelper,
+  focusClaudeDesktopWindow,
   focusTerminalWindow,
   captureGhosttyTerminalId,
   clearMacFocusCooldownTimer,
@@ -2634,6 +2640,10 @@ function focusDashboardSession(sessionId, options = {}) {
       focusTerminalSession,
     });
     return true;
+  }
+
+  if (focusTarget.type === "claude-desktop") {
+    return focusClaudeDesktopWindow({ requestSource }).submitted;
   }
 
   if (focusTarget.type === "terminal") {
@@ -2860,6 +2870,8 @@ agentRuntime = createAgentRuntimeMain({
   getStateRuntime: () => _state,
   getPermissionRuntime: () => _perm,
   isAgentEnabled: (agentId) => _runtimeAgentGate.isAgentEnabled(agentId),
+  enableCliProxyApiCodexQuota: true,
+  enableAntigravityQuota: true,
   updateSession: (sessionId, state, event, opts) => updateSession(sessionId, state, event, opts),
   debugLog: (msg) => sessionLog(msg),
   captureGhosttyTerminalId,
@@ -5858,6 +5870,8 @@ if (!gotTheLock) {
     // agent-gate snapshot — a user who disabled Codex at last shutdown
     // shouldn't see its file watcher spin up on the next launch.
     agentRuntime.startCodexLogMonitor();
+    agentRuntime.startAntigravityQuotaMonitor();
+    claudeDesktopCoworkBridge.start();
 
     // Auto-install VS Code/Cursor terminal-focus extension
     try { installTerminalFocusExtension(); } catch (err) {
@@ -5916,6 +5930,7 @@ if (!gotTheLock) {
       void _telegramMigrationController.dispose();
     }
     if (discordPresenceBridge) discordPresenceBridge.stop();
+    claudeDesktopCoworkBridge.stop();
     stopFeishuApprovalClient();
     _perm.cleanup();
     _server.cleanup();

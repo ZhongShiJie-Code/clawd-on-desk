@@ -1,6 +1,6 @@
 "use strict";
 
-// Shared predicate for "passive" notification bubbles — Codex/Kimi cues that
+// Shared predicate for "passive" notification bubbles — Codex/Kimi/Claude Desktop cues that
 // carry no HTTP decision channel and must never be treated as an actionable
 // permission (Allow/Deny), a Telegram-approvable request, or an auto-approve
 // target. Extracted so permission.js, main.js, and telegram-direct-send.js
@@ -10,6 +10,7 @@ function isPassiveNotifyEntry(permEntry) {
     permEntry.isCodexNotify
     || permEntry.isCodexUserInputNotify
     || permEntry.isKimiNotify
+    || permEntry.isClaudeDesktopNotify
   ));
 }
 

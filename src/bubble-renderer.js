@@ -102,6 +102,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Codex Tool Approval",
     kimiPermission: "Kimi Permission",
     checkKimiTerminal: "Approve or reject this request in the Kimi terminal.",
+    claudeDesktopPermission: "Claude Desktop Permission",
+    checkClaudeDesktop: "Review and respond to this request in Claude Desktop.",
     gotIt: "Got it",
     codexNeedsInput: "Codex Needs Input",
     goToCodex: "Go to Codex",
@@ -152,6 +154,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Codex \u5DE5\u5177\u8C03\u7528\u5BA1\u6279",
     kimiPermission: "Kimi \u6743\u9650\u8BF7\u6C42",
     checkKimiTerminal: "\u8BF7\u5728 Kimi \u7EC8\u7AEF\u4E2D\u6279\u51C6\u6216\u62D2\u7EDD\u8BE5\u8BF7\u6C42\u3002",
+    claudeDesktopPermission: "Claude Desktop \u6743\u9650\u63D0\u9192",
+    checkClaudeDesktop: "\u8BF7\u5728 Claude Desktop \u4E2D\u68C0\u67E5\u5E76\u56DE\u5E94\u6B64\u8BF7\u6C42\u3002",
     gotIt: "\u77E5\u9053\u4E86",
     codexNeedsInput: "Codex \u9700\u8981\u4F60\u7684\u56DE\u7B54",
     goToCodex: "\u524D\u5F80 Codex",
@@ -202,6 +206,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Codex 工具呼叫審批",
     kimiPermission: "Kimi 權限請求",
     checkKimiTerminal: "請在 Kimi 終端機中允許或拒絕此請求。",
+    claudeDesktopPermission: "Claude Desktop 權限提醒",
+    checkClaudeDesktop: "請在 Claude Desktop 中檢查並回應此請求。",
     gotIt: "了解",
     codexNeedsInput: "Codex 需要你的回答",
     goToCodex: "前往 Codex",
@@ -252,6 +258,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Codex \uB3C4\uAD6C \uD638\uCD9C \uC2B9\uC778",
     kimiPermission: "Kimi \uAD8C\uD55C \uC694\uCCAD",
     checkKimiTerminal: "Kimi \uD130\uBBF8\uB110\uC5D0\uC11C \uC774 \uC694\uCCAD\uC744 \uD5C8\uC6A9\uD558\uAC70\uB098 \uAC70\uBD80\uD558\uC138\uC694.",
+    claudeDesktopPermission: "Claude Desktop \uAD8C\uD55C \uC54C\uB9BC",
+    checkClaudeDesktop: "Claude Desktop\uC5D0\uC11C \uC774 \uC694\uCCAD\uC744 \uD655\uC778\uD558\uACE0 \uC751\uB2F5\uD558\uC138\uC694.",
     gotIt: "\uD655\uC778",
     codexNeedsInput: "Codex\uC5D0 \uC785\uB825\uC774 \uD544\uC694\uD569\uB2C8\uB2E4",
     goToCodex: "Codex\uB85C \uC774\uB3D9",
@@ -302,6 +310,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Codex ツール呼び出しの承認",
     kimiPermission: "Kimi 権限リクエスト",
     checkKimiTerminal: "Kimi ターミナルでこのリクエストを許可または拒否してください。",
+    claudeDesktopPermission: "Claude Desktop 権限通知",
+    checkClaudeDesktop: "Claude Desktop でこのリクエストを確認して応答してください。",
     gotIt: "了解",
     codexNeedsInput: "Codex に入力が必要",
     goToCodex: "Codex へ移動",
@@ -352,6 +362,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Aprovação de ferramenta do Codex",
     kimiPermission: "Permissão do Kimi",
     checkKimiTerminal: "Aprove ou recuse este pedido no terminal do Kimi.",
+    claudeDesktopPermission: "Permissão do Claude Desktop",
+    checkClaudeDesktop: "Revise e responda a esta solicitação no Claude Desktop.",
     gotIt: "Entendi",
     codexNeedsInput: "O Codex precisa de resposta",
     goToCodex: "Ir para o Codex",
@@ -402,6 +414,8 @@ const BUBBLE_STRINGS = {
     codexToolApproval: "Aprobación de herramienta de Codex",
     kimiPermission: "Permiso de Kimi",
     checkKimiTerminal: "Aprueba o rechaza esta solicitud en la terminal de Kimi.",
+    claudeDesktopPermission: "Permiso de Claude Desktop",
+    checkClaudeDesktop: "Revisa y responde a esta solicitud en Claude Desktop.",
     gotIt: "Entendido",
     codexNeedsInput: "Codex necesita una respuesta",
     goToCodex: "Ir a Codex",
@@ -1185,6 +1199,7 @@ function renderCodexUserInputPreview(data) {
 function show(data) {
   const isPassiveRefresh = data.toolName === "CodexExec"
     || data.toolName === "KimiPermission"
+    || data.toolName === "ClaudeDesktopPermission"
     || data.isCodexUserInputNotify === true;
   if (currentData && !isPassiveRefresh) {
     currentData = {
@@ -1410,6 +1425,20 @@ function show(data) {
     }
     toolPill.style.display = "";
     btnAllow.textContent = bubbleText(data.lang, "goToTerminal");
+    btnAllow.disabled = false;
+    btnDeny.style.display = "none";
+    suggestionsContainer.innerHTML = "";
+    revealCard();
+    return;
+  }
+
+  if (data.isClaudeDesktopNotify === true || data.toolName === "ClaudeDesktopPermission") {
+    headerTitle.textContent = bubbleText(data.lang, "claudeDesktopPermission");
+    toolPillText.textContent = "CLAUDE";
+    toolPill.setAttribute("data-tool", "ClaudeDesktopPermission");
+    toolPill.style.display = "";
+    commandBlock.textContent = bubbleText(data.lang, "checkClaudeDesktop");
+    btnAllow.textContent = bubbleText(data.lang, "gotIt");
     btnAllow.disabled = false;
     btnDeny.style.display = "none";
     suggestionsContainer.innerHTML = "";

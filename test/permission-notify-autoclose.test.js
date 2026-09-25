@@ -474,6 +474,40 @@ describe("permission passive notify auto-close refresh", () => {
     assert.strictEqual(legacy.toolInput.command, "Approve or reject in Kimi terminal.");
   });
 
+  it("keeps Claude Desktop permission reminders passive and dismiss-only", () => {
+    mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { api, focused } = createPermissionHarness();
+    assert.strictEqual(api.showClaudeDesktopPermissionReminder({
+      sessionId: "claude-session",
+      requestId: "request-1",
+      toolName: "Bash",
+    }), true);
+    const entry = api.pendingPermissions[0];
+    assert.strictEqual(entry.isClaudeDesktopNotify, true);
+    assert.strictEqual(entry.toolInput && Object.keys(entry.toolInput).length, 0);
+    assert.strictEqual(api.buildPermissionBubblePayload(entry).isClaudeDesktopNotify, true);
+    assert.strictEqual(api.isPermissionEntryLive(entry), false);
+    assert.strictEqual(api.pendingPermissions.length, 1);
+
+    api.handleDecide({ sender: { __window: entry.bubble } }, "allow");
+    assert.strictEqual(api.pendingPermissions.length, 0);
+    assert.deepStrictEqual(focused, []);
+  });
+
+  it("clears only the matching Claude Desktop permission reminder", () => {
+    mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const { api } = createPermissionHarness();
+    api.showClaudeDesktopPermissionReminder({ sessionId: "claude-session", requestId: "request-1" });
+    api.showClaudeDesktopPermissionReminder({ sessionId: "claude-session", requestId: "request-2" });
+    assert.strictEqual(api.clearClaudeDesktopPermissionReminder({
+      sessionId: "claude-session",
+      requestId: "request-1",
+    }), 1);
+    assert.deepStrictEqual(api.pendingPermissions.map((entry) => entry.claudeDesktopRequestKey), [
+      "claude-session:request-2",
+    ]);
+  });
+
   it("deduplicates Kimi passive notifications by session and refreshes the cue in place", () => {
     mock.timers.enable({ apis: ["setTimeout", "Date"] });
     mock.timers.setTime(100_000);

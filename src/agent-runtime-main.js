@@ -12,6 +12,8 @@ const { digestCodexTurnId, normalizeCodexTurnId } = require("./codex-turn-id");
 const createCodexTurnFence = require("./codex-turn-fence");
 const createCodexOfficialActivity = require("./codex-official-activity");
 const { createQoderSessionTitleTracker, QODER_TITLE_EVENTS } = require("./qoder-session-title");
+const createCliProxyApiCodexQuotaMonitor = require("./cliproxyapi-codex-quota");
+const createAntigravityQuotaMonitor = require("./antigravity-quota-monitor");
 
 const CODEX_OFFICIAL_LOG_SUPPRESS_TTL_MS = 10 * 60 * 1000;
 // Intentionally excludes response_item:web_search_call. Codex official hooks
@@ -70,6 +72,10 @@ function createAgentRuntimeMain(options = {}) {
   const debugLog = typeof options.debugLog === "function" ? options.debugLog : () => {};
   const loadCodexLogMonitor = options.loadCodexLogMonitor || (() => require("../agents/codex-log-monitor"));
   const loadCodexAgent = options.loadCodexAgent || (() => require("../agents/codex"));
+  const loadCliProxyApiCodexQuotaMonitor = options.loadCliProxyApiCodexQuotaMonitor
+    || (() => createCliProxyApiCodexQuotaMonitor);
+  const loadAntigravityQuotaMonitor = options.loadAntigravityQuotaMonitor
+    || (() => createAntigravityQuotaMonitor);
   const codexSubagentClassifier = options.codexSubagentClassifier || new DefaultCodexSubagentClassifier();
   const localCodexSubagentClassifier = createProfileScopedClassifier(codexSubagentClassifier, "local");
   const getServer = options.getServer || (() => null);
@@ -90,8 +96,12 @@ function createAgentRuntimeMain(options = {}) {
   const onCodexArchiveLifecycleEnd = typeof options.onCodexArchiveLifecycleEnd === "function"
     ? options.onCodexArchiveLifecycleEnd
     : null;
+  const enableCliProxyApiCodexQuota = options.enableCliProxyApiCodexQuota === true;
+  const enableAntigravityQuota = options.enableAntigravityQuota === true;
 
   let codexMonitor = null;
+  let cliProxyApiCodexQuotaMonitor = null;
+  let antigravityQuotaMonitor = null;
   let disposed = false;
   const codexTurnFence = createCodexTurnFence({ now, debugLog });
   const codexOfficialActivity = createCodexOfficialActivity({
@@ -510,7 +520,56 @@ function createAgentRuntimeMain(options = {}) {
     return removed;
   }
 
+  function startCliProxyApiCodexQuotaMonitor() {
+    if (!enableCliProxyApiCodexQuota) return null;
+    if (cliProxyApiCodexQuotaMonitor) {
+      cliProxyApiCodexQuotaMonitor.start?.();
+      return cliProxyApiCodexQuotaMonitor;
+    }
+    try {
+      const createMonitor = loadCliProxyApiCodexQuotaMonitor();
+      cliProxyApiCodexQuotaMonitor = createMonitor({
+        onQuota: (codexQuota) => {
+          const stateRuntime = getStateRuntime();
+          if (stateRuntime && typeof stateRuntime.updateAccountQuota === "function") {
+            stateRuntime.updateAccountQuota(null, { codexQuota });
+          }
+        },
+        debugLog,
+      });
+      cliProxyApiCodexQuotaMonitor?.start?.();
+    } catch (err) {
+      logWarn("Clawd: CLIProxyAPI Codex quota monitor not started:", err && err.message);
+    }
+    return cliProxyApiCodexQuotaMonitor;
+  }
+
+  function startAntigravityQuotaMonitor() {
+    if (!enableAntigravityQuota) return null;
+    if (antigravityQuotaMonitor) {
+      antigravityQuotaMonitor.start?.();
+      return antigravityQuotaMonitor;
+    }
+    try {
+      const createMonitor = loadAntigravityQuotaMonitor();
+      antigravityQuotaMonitor = createMonitor({
+        onQuota: (antigravityQuota) => {
+          const stateRuntime = getStateRuntime();
+          if (stateRuntime && typeof stateRuntime.updateAccountQuota === "function") {
+            stateRuntime.updateAccountQuota(null, { antigravityQuota });
+          }
+        },
+        debugLog,
+      });
+      antigravityQuotaMonitor?.start?.();
+    } catch (err) {
+      logWarn("Clawd: Antigravity quota monitor not started:", err && err.message);
+    }
+    return antigravityQuotaMonitor;
+  }
+
   function startCodexLogMonitor() {
+    startCliProxyApiCodexQuotaMonitor();
     if (codexMonitor) {
       if (isAgentEnabled("codex")) {
         codexMonitor.start();
@@ -649,6 +708,12 @@ function createAgentRuntimeMain(options = {}) {
 
   function cleanup() {
     disposed = true;
+    if (antigravityQuotaMonitor && typeof antigravityQuotaMonitor.stop === "function") {
+      antigravityQuotaMonitor.stop();
+    }
+    if (cliProxyApiCodexQuotaMonitor && typeof cliProxyApiCodexQuotaMonitor.stop === "function") {
+      cliProxyApiCodexQuotaMonitor.stop();
+    }
     if (codexMonitor && typeof codexMonitor.stop === "function") codexMonitor.stop();
     stopCodexArchiveTracker();
     resetLocalCodexLifecycleTracking();
@@ -665,6 +730,8 @@ function createAgentRuntimeMain(options = {}) {
   return {
     getCodexSubagentClassifier: () => codexSubagentClassifier,
     startCodexLogMonitor,
+    startCliProxyApiCodexQuotaMonitor,
+    startAntigravityQuotaMonitor,
     startMonitorForAgent,
     stopMonitorForAgent,
     syncIntegrationForAgent,
